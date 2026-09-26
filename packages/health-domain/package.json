@@ -1,0 +1,10 @@
+{
+  "name": "@steppy/health-domain",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "node --test --import tsx test/**/*.test.ts", "lint": "tsc -p tsconfig.json --noEmit" },
+  "dependencies": { "date-fns": "^4.1.0" },
+  "devDependencies": { "tsx": "^4.19.2", "@types/node": "^22.10.2" }
+}

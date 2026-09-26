@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum HealthProvider {
+  DEVELOPER
+  APPLE_HEALTH
+  HEALTH_CONNECT
+  FITBIT
+  GARMIN
+  ZEPP
+  SAMSUNG_HEALTH
+}
+enum ConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  PERMISSION_REQUIRED
+  ERROR
+}
+enum SyncStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  BLOCKED
+}
+enum ChallengeType {
+  TOTAL_STEPS
+  DAILY_GOAL
+  AVERAGE_STEPS
+  STREAK
+  DISTANCE
+}
+enum ChallengeStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id                    String               @id @default(cuid())
+  email                 String               @unique
+  googleSubject         String?              @unique
+  passwordHash          String?
+  displayName           String
+  username              String               @unique
+  avatarUrl             String?
+  timezone              String               @default("UTC")
+  primaryProvider       HealthProvider       @default(DEVELOPER)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  connections           HealthConnection[]
+  activities            DailyActivity[]
+  sourceRecords         ActivitySourceRecord[]
+  createdChallenges     Challenge[]           @relation("ChallengeCreator")
+  challengeParticipants ChallengeParticipant[]
+  friendshipsFrom       Friendship[]          @relation("FriendshipFrom")
+  friendshipsTo         Friendship[]          @relation("FriendshipTo")
+  sentRequests           FriendRequest[]       @relation("RequestSender")
+  receivedRequests      FriendRequest[]       @relation("RequestReceiver")
+  refreshTokens         RefreshToken[]
+  pushTokens            DevicePushToken[]
+  achievements          UserAchievement[]
+}
+
+model RefreshToken {
+  id String @id @default(cuid())
+  userId String
+  tokenHash String @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model HealthConnection {
+  id String @id @default(cuid())
+  userId String
+  provider HealthProvider
+  status ConnectionStatus @default(DISCONNECTED)
+  providerUserId String?
+  connectedAt DateTime?
+  lastSyncedAt DateTime?
+  earliestAvailableDate String?
+  syncCursor String?
+  metadata Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syncJobs SyncJob[]
+  @@unique([userId, provider])
+}
+
+model ActivitySourceRecord {
+  id String @id @default(cuid())
+  userId String
+  provider HealthProvider
+  localDate String
+  timezone String
+  steps Int
+  distanceMeters Float?
+  activeMinutes Int?
+  caloriesKcal Float?
+  sourceKey String
+  sourceDevice String?
+  recordedAt DateTime?
+  importedAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, provider, sourceKey])
+  @@index([userId, localDate])
+}
+
+model DailyActivity {
+  id String @id @default(cuid())
+  userId String
+  localDate String
+  timezone String
+  steps Int
+  distanceMeters Float?
+  activeMinutes Int?
+  caloriesKcal Float?
+  primaryProvider HealthProvider
+  sourceMetadata Json?
+  sourceUpdatedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeTotals ChallengeDailyTotal[]
+  @@unique([userId, localDate])
+  @@index([userId, localDate])
+}
+
+model SyncJob {
+  id String @id @default(cuid())
+  userId String
+  healthConnectionId String
+  status SyncStatus @default(QUEUED)
+  kind String
+  startDate String
+  endDate String
+  progress Int @default(0)
+  recordsImported Int @default(0)
+  cursor String?
+  errorCode String?
+  errorMessage String?
+  startedAt DateTime?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  connection HealthConnection @relation(fields: [healthConnectionId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+}
+
+model Friendship {
+  id String @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status FriendshipStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  requester User @relation("FriendshipFrom", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("FriendshipTo", fields: [addresseeId], references: [id], onDelete: Cascade)
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId, status])
+}
+
+model FriendRequest {
+  id String @id @default(cuid())
+  senderId String
+  receiverId String
+  status FriendshipStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sender User @relation("RequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("RequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  @@unique([senderId, receiverId])
+}
+
+model Challenge {
+  id String @id @default(cuid())
+  creatorId String
+  name String
+  description String?
+  startAt DateTime
+  endAt DateTime
+  timezone String
+  type ChallengeType @default(TOTAL_STEPS)
+  status ChallengeStatus @default(UPCOMING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  creator User @relation("ChallengeCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  participants ChallengeParticipant[]
+  dailyTotals ChallengeDailyTotal[]
+  @@index([status, startAt, endAt])
+}
+
+model ChallengeParticipant {
+  id String @id @default(cuid())
+  challengeId String
+  userId String
+  joinedAt DateTime @default(now())
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([challengeId, userId])
+}
+
+model ChallengeDailyTotal {
+  id String @id @default(cuid())
+  challengeId String
+  userId String
+  activityId String?
+  localDate String
+  steps Int
+  updatedAt DateTime @updatedAt
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  activity DailyActivity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  @@unique([challengeId, userId, localDate])
+  @@index([challengeId, userId])
+}
+
+model Achievement {
+  id String @id @default(cuid())
+  key String @unique
+  name String
+  description String
+  userAchievements UserAchievement[]
+}
+model UserAchievement {
+  id String @id @default(cuid())
+  userId String
+  achievementId String
+  earnedAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  @@unique([userId, achievementId])
+}
+model DevicePushToken {
+  id String @id @default(cuid())
+  userId String
+  token String @unique
+  platform String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

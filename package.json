@@ -1,0 +1,17 @@
+{
+  "name": "steppy",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @steppy/api dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm --filter @steppy/health-domain build && pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "db:generate": "pnpm --filter @steppy/api prisma:generate",
+    "db:migrate": "pnpm --filter @steppy/api prisma:migrate"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
