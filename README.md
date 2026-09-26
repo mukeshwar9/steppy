@@ -204,3 +204,63 @@ Pure domain tests cover source selection and statistics. Add API integration tes
 6. **Phase 4:** Zepp/Samsung only after feasibility confirmation.
 
 Stop condition for MVP: two seeded users can import developer history, create/join one challenge, simulate updated activity through the same import pipeline, and receive an ordered leaderboard update without TypeScript/test failures.
+
+## Current state and source feasibility (assessed 2026-09-27)
+
+### Current state
+
+- Working end to end: the backend MVP with the synthetic Developer provider (register, five-year import, friends, challenges, ranked leaderboard, `challenge.leaderboard.updated` event). Verified locally against Postgres.
+- Android Health Connect: one-shot foreground import during onboarding only. There is no background or incremental sync, and without `READ_HEALTH_DATA_HISTORY` Health Connect returns only about 30 days before the permission grant, not five years.
+- Not implemented: Apple Health (entitlements are empty), WHOOP, and Zepp. `POST /health/{APPLE_HEALTH,ZEPP,...}/connect` returns 501. The mobile app does not consume the Socket.IO leaderboard.
+- Build and tests: `pnpm build` passes. `pnpm test` passes, but only the three `health-domain` tests exist; the API and mobile have none. `pnpm typecheck` fails on a clean checkout (`Cannot find module '@steppy/shared'`) because the root script builds only `health-domain` first.
+- Known defects:
+  - Connecting Health Connect while a Developer import is running leaves Developer canonical rows behind. `runImport` reads `primaryProvider` once, before its loop.
+  - Import jobs run in-process and are not recovered after a restart, so an interrupted job stays `RUNNING` forever.
+
+### Per-source import feasibility
+
+| Source | Path | Steps | Where | Notes |
+|---|---|---|---|---|
+| Apple Watch / iPhone | HealthKit | Yes, via `HKStatisticsCollectionQuery`, which de-dupes watch and phone | On device only | Needs a dev/EAS build, not Expo Go. HealthKit plus background-delivery entitlements. App Store 5.1.1 and 5.1.3. |
+| Android (phone, Galaxy, Pixel) | Health Connect | Yes, via `aggregate` with `COUNT_TOTAL` | On device only | Needs `READ_HEALTH_DATA_HISTORY` and `READ_HEALTH_DATA_IN_BACKGROUND`. Play Health apps declaration plus a permission justification. |
+| Google Fit | Do not integrate | — | — | Sign-ups closed 2024-05-01 and the APIs end in late 2026. The Fit app syncs into Health Connect, so Fit users are covered there. |
+| Helio / Zepp (Amazfit) | Via Apple Health or Health Connect | Yes, indirectly | Phone store | No public cloud API; the partner API is corporate-only. Users must enable Zepp's sync to Apple Health or Health Connect. |
+| WHOOP | Cloud OAuth API v2 | Yes, `cycles.step_count` since 2026-09-23 | Server | Cycles run sleep to sleep, not calendar days. No step webhook, so the server polls. 100 requests/min, 10,000/day. The Sandbox tier allows 10 members. |
+
+Aggregating across friends is feasible with the phone as the hub: HealthKit and Health Connect cover Apple Watch, Zepp/Helio, Android and Google Fit users, and WHOOP is the only cloud adapter. Paid aggregators (Terra, Junction and others, about $300–500 a month) still require their on-device SDKs, so they add little for this use case.
+
+### Real-time vs app-open
+
+Nothing is truly real-time.
+
+- App open: seconds.
+- iOS background: HealthKit background delivery for `stepCount` is capped at hourly, and HealthKit cannot be read while the device is locked.
+- Android background: WorkManager runs every 15 minutes at best. Doze and standby buckets can delay it by hours.
+- Wearable apps (Zepp, Watch) add their own sync delay before steps reach the phone store.
+- WHOOP: freshness is the server's polling interval.
+
+Product framing: "live while open, synced through the day, final next morning". Show `lastSyncedAt` for every participant.
+
+### Prioritised next steps (one engineer)
+
+1. Fix the typecheck script, the primary-switch race, and job recovery on boot: 0.5–1 day.
+2. HealthKit adapter (`@kingstinct/react-native-healthkit`), entitlements, EAS dev build, observer plus background delivery: 3–5 days.
+3. Health Connect history and background permissions, incremental resync of the last 7 days, WorkManager task: 3–4 days.
+4. Sync on app open, `lastSyncedAt` UI, Socket.IO client on the challenge screen: 2–3 days.
+5. Canonical-day service (primary source with fallback, manual-entry filter, settle window) plus API integration tests: 3–4 days.
+6. Silent-push sync nudges (APNs/FCM): 2 days.
+7. BullMQ worker for imports, rate limiting: 2 days.
+8. WHOOP OAuth, poller, webhook-triggered polls, cycle-to-date mapping: 3–5 days.
+9. Store compliance, TestFlight and Play internal testing: 2–3 days, plus about a week of review.
+
+About 3–4 weeks to a friends beta (steps 1–6 and 9), or 4–6 weeks including WHOOP and the worker.
+
+### Open product calls (parked)
+
+These calls are parked for a decision. Recommendations:
+
+- Multiple sources per user: primary source with fallback, never summed.
+- WHOOP: defer to v1.1.
+- Freshness promise: live while open, final next morning.
+- Distribution: private TestFlight and Play internal testing.
+- Build vs buy: build natively rather than use a paid aggregator.
