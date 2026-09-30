@@ -6,7 +6,8 @@ import { useSession } from "../api/session";
 import { errorText } from "../lib/hooks";
 import { sourceLabel } from "../lib/format";
 import { markOnboarded } from "../state/prefs";
-import { availableSources, connectSource, useSyncState } from "../sync";
+import { availableSources, connectSource, getSyncState, useSyncState } from "../sync";
+import { noStepsHint } from "../lib/syncNotes";
 import { spacing, useTheme } from "../theme";
 import { AppText, Button, Card, InlineError } from "../components/ui";
 
@@ -21,6 +22,7 @@ export function OnboardingScreen() {
   const sources = availableSources();
   const [busy, setBusy] = useState<StepSource | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
 
   const finish = async () => {
     if (userId) await markOnboarded(userId);
@@ -28,9 +30,16 @@ export function OnboardingScreen() {
 
   const connect = async (source: StepSource) => {
     setError(null);
+    setHint(null);
     setBusy(source);
     try {
       await connectSource(source);
+      if (getSyncState().noStepsFound) {
+        // Stay here so the hint is seen; the backfill retries on the next sync.
+        setHint(noStepsHint(source));
+        setBusy(null);
+        return;
+      }
       await finish();
     } catch (e) {
       setError(errorText(e));
@@ -73,6 +82,14 @@ export function OnboardingScreen() {
         ) : null}
 
         <InlineError message={error} />
+        {hint ? (
+          <Card style={{ gap: spacing.xs }}>
+            <AppText variant="bodyStrong">{hint}</AppText>
+            <AppText variant="caption" muted>
+              Steppy connected and will import the last 90 days as soon as steps are readable. You can continue now.
+            </AppText>
+          </Card>
+        ) : null}
 
         <View style={{ gap: spacing.sm }}>
           {real.map((source) => (
@@ -87,7 +104,7 @@ export function OnboardingScreen() {
               disabled={busy !== null}
             />
           ) : null}
-          <Button title="Skip for now" variant="ghost" onPress={() => void finish()} disabled={busy !== null} />
+          <Button title={hint ? "Continue anyway" : "Skip for now"} variant="ghost" onPress={() => void finish()} disabled={busy !== null} />
         </View>
         <AppText variant="caption" muted style={{ textAlign: "center" }}>
           You can connect or change your source any time in the Me tab.

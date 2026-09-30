@@ -8,7 +8,8 @@ import { useSession } from "../api/session";
 import { formatSteps, sourceLabel } from "../lib/format";
 import { errorText, useNow, usePullRefresh } from "../lib/hooks";
 import { deviceTimezone } from "../lib/tz";
-import { signOut } from "../state/auth";
+import { deleteAccount, signOut } from "../state/auth";
+import { LIMITED_HISTORY_NOTE, noStepsHint } from "../lib/syncNotes";
 import { availableSources, connectSource, developmentToolsEnabled, disconnectSource, syncNow, useSyncState, writeSampleHealthData } from "../sync";
 import { spacing } from "../theme";
 import { Screen } from "../components/Screen";
@@ -75,6 +76,23 @@ export function MeScreen() {
       { text: "Sign out", style: "destructive", onPress: () => void signOut() }
     ]);
 
+  const confirmDelete = () =>
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your Steppy account and everything in it: your profile, your step history, your friendships, and your membership in every group. Groups you own follow the same rules as leaving them. This can't be undone. The steps in your health app are not touched.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete account",
+          style: "destructive",
+          onPress: () =>
+            void run("delete", async () => {
+              await deleteAccount();
+            })
+        }
+      ]
+    );
+
   return (
     <Screen refreshing={refreshing} onRefresh={() => void onRefresh()}>
       <SectionHeader title="Profile" />
@@ -126,6 +144,16 @@ export function MeScreen() {
           {connected && !sync.backfillDone ? " · importing the last 90 days…" : ""}
         </AppText>
         <InlineError message={syncError ?? (sync.status === "error" ? sync.lastError : null)} />
+        {connected && sync.noStepsFound ? (
+          <AppText variant="caption" style={{ fontWeight: "600" }}>
+            {noStepsHint(sync.source)}
+          </AppText>
+        ) : null}
+        {connected && sync.historyLimited ? (
+          <AppText variant="caption" muted>
+            {LIMITED_HISTORY_NOTE}
+          </AppText>
+        ) : null}
 
         {connected ? (
           <Button title="Sync now" onPress={() => void run("sync", () => syncNow("pull"))} loading={busy === "sync" || sync.status === "syncing"} />
@@ -192,7 +220,8 @@ export function MeScreen() {
         <AppText selectable>{API_URL}</AppText>
       </Card>
 
-      <Button title="Sign out" variant="danger" onPress={confirmSignOut} style={{ marginTop: spacing.xl }} />
+      <Button title="Sign out" variant="danger" onPress={confirmSignOut} style={{ marginTop: spacing.xl }} disabled={busy !== null} />
+      <Button title="Delete account" variant="ghost" onPress={confirmDelete} loading={busy === "delete"} disabled={busy !== null && busy !== "delete"} />
     </Screen>
   );
 }

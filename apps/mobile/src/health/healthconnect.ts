@@ -88,6 +88,43 @@ export async function writeHealthConnectSamples(userId: string, dates: string[],
   for (let i = 0; i < records.length; i += 100) await insertRecords(records.slice(i, i + 100));
 }
 
+/**
+ * True when history access (READ_HEALTH_DATA_HISTORY) is available. Without it Health Connect only
+ * serves data from the last 30 days.
+ *
+ * react-native-health-connect's getGrantedPermissions() never lists the history permission (its
+ * native side only maps per-record and background permissions), so besides checking the list this
+ * probes: reading a slice older than 30 days throws a permission/security error when history access
+ * is missing. Any other failure counts as "available" so a transient error does not shrink the import.
+ */
+export async function hasHistoryRead(): Promise<boolean> {
+  try {
+    const granted = await getGrantedPermissions();
+    if (granted.some(p => p.accessType === "read" && (p.recordType as string) === "ReadHealthDataHistory")) return true;
+  } catch {
+    return true;
+  }
+  try {
+    const DAY = 86_400_000;
+    const end = new Date(Date.now() - 34 * DAY);
+    const start = new Date(end.getTime() - DAY);
+    await aggregateGroupByPeriod({
+      recordType: "Steps",
+      timeRangeFilter: { operator: "between", startTime: start.toISOString(), endTime: end.toISOString() },
+      timeRangeSlicer: { period: "DAYS", length: 1 }
+    });
+    return true;
+  } catch (error) {
+    return !isHistoryDenied(error);
+  }
+}
+
+/** True for the permission/security errors Health Connect raises when history access is missing. */
+export function isHistoryDenied(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  return /permission|security|denied|not allowed/i.test(message);
+}
+
 /** True when background reads are allowed (READ_HEALTH_DATA_IN_BACKGROUND granted). */
 export async function hasBackgroundRead(): Promise<boolean> {
   try {

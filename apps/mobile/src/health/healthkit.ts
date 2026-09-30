@@ -47,10 +47,13 @@ export async function disableHealthKitBackgroundDelivery(): Promise<void> {
 type Subscription = { remove: () => void };
 let observer: Subscription | null = null;
 
-/** Registers the HKObserverQuery listener (idempotent). The native side completes the HealthKit handler. */
-export function subscribeToStepChanges(onChange: () => void): void {
+/**
+ * Registers the HKObserverQuery listener (idempotent). The native side completes the HealthKit handler.
+ * `onChange` receives the error message when HealthKit reports an error instead of a change.
+ */
+export function subscribeToStepChanges(onChange: (errorMessage?: string) => void): void {
   if (observer) return;
-  observer = HK.subscribeToChanges(STEP_COUNT, () => onChange());
+  observer = HK.subscribeToChanges(STEP_COUNT, args => onChange(args?.errorMessage));
 }
 
 export function unsubscribeFromStepChanges(): void {

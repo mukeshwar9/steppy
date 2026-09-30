@@ -34,9 +34,9 @@ export function RootNavigator() {
         <Stack.Screen name="Onboarding" component={OnboardingScreen} options={{ headerShown: false }} />
       ) : (
         <>
-          <Stack.Screen name="Tabs" component={MainTabs} options={{ headerShown: false }} />
+          <Stack.Screen name="Tabs" component={MainTabs} options={{ headerShown: false, title: "Groups" }} />
           <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ title: "New group", presentation: "modal" }} />
-          <Stack.Screen name="Group" component={GroupScreen} options={({ route }) => ({ title: route.params.name ?? "Group" })} />
+          <Stack.Screen name="Group" component={GroupScreen} options={({ route }) => ({ title: route.params.name ?? "Group", headerBackTitle: "Groups" })} />
           <Stack.Screen name="CreateChallenge" component={CreateChallengeScreen} options={{ title: "New challenge", presentation: "modal" }} />
           <Stack.Screen name="Challenge" component={ChallengeScreen} options={({ route }) => ({ title: route.params.name ?? "Challenge" })} />
         </>

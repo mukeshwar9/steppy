@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, AppState, View } from "react-native";
 import { DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -23,6 +23,11 @@ function Root() {
   useEffect(() => {
     void hydrateSession();
     void hydratePrefs();
+    // A keychain read error is not cached; retry when the app comes back (for example after the device was unlocked).
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active") void hydrateSession();
+    });
+    return () => subscription.remove();
   }, []);
 
   const base = dark ? DarkTheme : DefaultTheme;

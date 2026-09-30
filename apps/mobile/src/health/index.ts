@@ -56,9 +56,21 @@ export async function disableSourceBackground(source: StepSource | null): Promis
   }
 }
 
-/** Registers the HealthKit observer; `onChange` runs a background sync. No-op elsewhere. */
-export function observeSource(source: StepSource, onChange: () => void): void {
+/**
+ * Registers the HealthKit observer. `onChange` gets the error message when HealthKit reports an
+ * error instead of a change. No-op elsewhere.
+ */
+export function observeSource(source: StepSource, onChange: (errorMessage?: string) => void): void {
   if (source === "HEALTHKIT") healthKit().subscribeToStepChanges(onChange);
+}
+
+/**
+ * True when the source can only serve a limited window of history: Health Connect without
+ * history access (READ_HEALTH_DATA_HISTORY) only serves the last 30 days.
+ */
+export async function isHistoryLimited(source: StepSource): Promise<boolean> {
+  if (source !== "HEALTH_CONNECT") return false;
+  return !(await healthConnect().hasHistoryRead());
 }
 
 /** Dev helper: writes 90 days of sample data into the store unless it already has data. */

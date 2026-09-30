@@ -11,6 +11,7 @@ import { LIVE_INTERVAL_MS } from "./plan";
 import { ensureHydrated, getSyncState, subscribeSyncState } from "./store";
 import type { SyncState, SyncStatus } from "./types";
 
+export { getSyncState };
 export type { SyncState, SyncStatus };
 
 /** Sources this platform can offer: iOS -> HEALTHKIT, Android -> HEALTH_CONNECT; DEMO everywhere. */
@@ -85,7 +86,17 @@ export async function writeSampleHealthData(): Promise<void> {
 /** True when development tools (sample health data) are enabled; false in STEPPY_PRODUCTION builds. */
 export const developmentToolsEnabled: boolean = engine.STEPPY_DEV;
 
-/** Clears local sync state on sign-out. */
-export async function resetSyncState(): Promise<void> {
-  return engine.resetSyncState();
+/** Sign-out: stops sync on this device but keeps the user's saved sync state. */
+export async function suspendSync(): Promise<void> {
+  return engine.suspendSync();
+}
+
+/** Sign-in: resumes the signed-in user's saved source (re-enables background sync). */
+export async function resumeSyncForUser(): Promise<void> {
+  return engine.resumeForUser();
+}
+
+/** Account deletion: stops sync and erases the user's saved sync state. */
+export async function eraseSyncState(userId: string | null): Promise<void> {
+  return engine.eraseSyncState(userId);
 }

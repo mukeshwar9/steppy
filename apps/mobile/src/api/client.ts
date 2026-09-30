@@ -27,8 +27,9 @@ import { request } from "./http";
 
 export { ApiError } from "./http";
 
-export async function uploadSteps(body: UploadStepsRequest): Promise<UploadStepsResponse> {
-  return request<UploadStepsResponse>("PUT", "/steps", { body });
+/** `asUser` binds the upload to the user whose steps were read; it fails if another account signed in meanwhile. */
+export async function uploadSteps(body: UploadStepsRequest, asUser?: string): Promise<UploadStepsResponse> {
+  return request<UploadStepsResponse>("PUT", "/steps", { body, asUser });
 }
 
 const enc = encodeURIComponent;
@@ -42,6 +43,8 @@ export const api = {
   // profile and personal steps
   getMe: () => request<User>("GET", "/me"),
   updateMe: (body: UpdateMeRequest) => request<User>("PATCH", "/me", { body }),
+  /** Deletes the account and all its data (204). */
+  deleteMe: () => request<void>("DELETE", "/me"),
   getMySteps: (from: string, to: string) => request<DailySteps[]>("GET", "/me/steps", { query: { from, to } }),
 
   // friends

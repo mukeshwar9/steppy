@@ -12,9 +12,17 @@ export type PlanInput = {
   /** Today's local date (device timezone). */
   today: string;
   backfillDone: boolean;
-  /** Local date of the last successful upload, null if never. */
-  lastSyncedDate: string | null;
+  /**
+   * Local date of the last successful *full* sync (foreground, pull or backfill), null if never.
+   * Background and live runs read only 2-3 days, so they must not move this.
+   */
+  lastFullSyncDate: string | null;
 };
+
+/** Reasons that read the whole catch-up window and therefore count as a full sync. */
+export function isFullSyncReason(reason: SyncReason): boolean {
+  return reason !== "live" && reason !== "background";
+}
 
 /** The reason actually sent to the API: an unfinished backfill always goes as "backfill". */
 export function effectiveReason(reason: SyncReason, backfillDone: boolean): SyncReason {
@@ -24,16 +32,41 @@ export function effectiveReason(reason: SyncReason, backfillDone: boolean): Sync
 
 /** Dates (ascending, contiguous) to read for a sync, at most BACKFILL_DAYS. */
 export function planDates(input: PlanInput): string[] {
-  const { reason, today, backfillDone, lastSyncedDate } = input;
+  const { reason, today, backfillDone, lastFullSyncDate } = input;
   const earliest = addDays(today, -(BACKFILL_DAYS - 1));
   if (reason === "backfill" || (!backfillDone && reason !== "live" && reason !== "background")) {
     return dateRange(earliest, today);
   }
   if (reason === "live") return dateRange(addDays(today, -1), today);
   let from = addDays(today, -(RECENT_DAYS - 1));
-  if (reason !== "background" && lastSyncedDate && lastSyncedDate < from) from = lastSyncedDate;
+  if (reason !== "background" && lastFullSyncDate && lastFullSyncDate < from) from = lastFullSyncDate;
   if (from < earliest) from = earliest;
   return dateRange(from, today);
+}
+
+/**
+ * Days to upload for a read. Reads longer than the recent window (backfill, catch-up) never send
+ * zero-valued days older than yesterday: the server treats a missing day as "no data", while a
+ * zero from a denied or empty health store would only hide that. `empty` is true when a long read
+ * found no steps on any day, which usually means read access was denied (HealthKit never says so).
+ */
+export function selectUploadDays(days: StepDay[], today: string): { upload: StepDay[]; empty: boolean } {
+  if (days.length <= RECENT_DAYS) return { upload: days, empty: false };
+  const yesterday = addDays(today, -1);
+  return {
+    upload: days.filter(d => d.steps > 0 || d.date >= yesterday),
+    empty: !days.some(d => d.steps > 0)
+  };
+}
+
+/** Health Connect without history access only serves the last 30 days; stay inside with 29. */
+export const LIMITED_HISTORY_DAYS = 29;
+
+/** Drops dates older than the last `maxDays` calendar days (today included). Null keeps everything. */
+export function clipDates(dates: string[], today: string, maxDays: number | null): string[] {
+  if (maxDays === null) return dates;
+  const earliest = addDays(today, -(maxDays - 1));
+  return dates.filter(d => d >= earliest);
 }
 
 /** True when any read day differs from what was last uploaded. */

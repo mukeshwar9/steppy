@@ -2,7 +2,8 @@
 import type { AuthResponse } from "@steppy/core";
 import { API_URL } from "./config";
 import { errorMessageFromBody } from "./errorMessage";
-import { clearSession, getAccessToken, hydrateSession, reloadTokensFromStorage, setSession, useSession } from "./session";
+import { afterRefreshRejection, isRefreshRejection } from "./refreshPolicy";
+import { SessionReadError, clearSession, getAccessToken, hydrateSession, reloadTokensFromStorage, setSession, useSession } from "./session";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -20,6 +21,8 @@ type RequestOptions = {
   query?: Record<string, string | number | undefined>;
   /** Send the bearer token and refresh on 401 (default true). */
   auth?: boolean;
+  /** Only send as this user: aborts with 401 if another account is signed in by the time the request goes out. */
+  asUser?: string;
 };
 
 function buildUrl(path: string, query?: RequestOptions["query"]): string {
@@ -76,7 +79,8 @@ let refreshing: Promise<boolean> | null = null;
 
 /**
  * Gets a fresh access token. Single flight. Returns true when the session holds a usable token.
- * Clears the session only when the server rejects the refresh token (not on network errors).
+ * Clears the session only when the server rejects the refresh token and the keychain holds no
+ * newer one. Network errors, 429, 5xx and keychain read errors keep the session (and throw).
  */
 export function refreshSession(failedAccessToken?: string | null): Promise<boolean> {
   if (!refreshing) {
@@ -90,6 +94,7 @@ export function refreshSession(failedAccessToken?: string | null): Promise<boole
 async function doRefresh(failedAccessToken: string | null): Promise<boolean> {
   await hydrateSession();
   const stored = await reloadTokensFromStorage();
+  if (stored === "error") throw new SessionReadError();
   const refreshToken = stored?.refreshToken ?? useSession.getState().refreshToken;
   if (!refreshToken) {
     await clearSession();
@@ -102,11 +107,21 @@ async function doRefresh(failedAccessToken: string | null): Promise<boolean> {
     await setSession(auth);
     return true;
   } catch (error) {
-    if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-      await clearSession();
-      return false;
+    if (error instanceof ApiError && isRefreshRejection(error.status)) {
+      const action = afterRefreshRejection({ usedRefreshToken: refreshToken, stored: await reloadTokensFromStorage() });
+      if (action === "adopt-stored") return true; // reloadTokensFromStorage already put the newer pair in the session
+      if (action === "clear-session") {
+        await clearSession();
+        return false;
+      }
     }
     throw error;
+  }
+}
+
+function assertUser(asUser: string | undefined): void {
+  if (asUser !== undefined && useSession.getState().user?.id !== asUser) {
+    throw new ApiError(401, "Signed in as a different user.");
   }
 }
 
@@ -114,10 +129,12 @@ export async function request<T>(method: string, path: string, opts: RequestOpti
   const auth = opts.auth !== false;
   const token = auth ? await getAccessToken() : null;
   if (auth && !token) throw new ApiError(401, "You are signed out.");
+  if (auth) assertUser(opts.asUser);
   let response = await send(method, path, opts, token);
   if (auth && response.status === 401) {
     const ok = await refreshSession(token);
     if (!ok) throw new ApiError(401, "Your session expired. Please sign in again.");
+    assertUser(opts.asUser);
     response = await send(method, path, opts, useSession.getState().accessToken);
   }
   return parse<T>(response);

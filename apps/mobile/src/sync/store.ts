@@ -11,7 +11,11 @@ export type PersistedSync = {
   v: 1;
   source: StepSource | null;
   lastSyncedAt: string | null;
+  /** Last foreground/pull/backfill sync; the catch-up window starts here (background and live runs do not move it). */
+  lastFullSyncAt: string | null;
   backfillDone: boolean;
+  noStepsFound: boolean;
+  historyLimited: boolean;
   /** Values last uploaded per local date (recent days only), used to detect changes. */
   lastUploaded: Record<string, number>;
   lastUploadAt: string | null;
@@ -22,7 +26,10 @@ const EMPTY: PersistedSync = {
   v: 1,
   source: null,
   lastSyncedAt: null,
+  lastFullSyncAt: null,
   backfillDone: false,
+  noStepsFound: false,
+  historyLimited: false,
   lastUploaded: {},
   lastUploadAt: null,
   todaySteps: null
@@ -34,7 +41,9 @@ const INITIAL_STATE: SyncState = {
   lastSyncedAt: null,
   lastError: null,
   backfillDone: false,
-  todaySteps: null
+  todaySteps: null,
+  noStepsFound: false,
+  historyLimited: false
 };
 
 // AFTER_FIRST_UNLOCK so background runs can read it while the phone is locked.
@@ -88,8 +97,14 @@ function stateFromPersisted(p: PersistedSync): SyncState {
     lastSyncedAt: p.lastSyncedAt,
     lastError: null,
     backfillDone: p.backfillDone,
-    todaySteps: p.todaySteps
+    todaySteps: p.todaySteps,
+    noStepsFound: p.source !== null && p.noStepsFound,
+    historyLimited: p.source !== null && p.historyLimited
   };
+}
+
+export function getHydratedUserId(): string | null | undefined {
+  return hydratedUserId;
 }
 
 async function load(userId: string | null): Promise<void> {
@@ -120,12 +135,16 @@ export async function updatePersisted(patch: Partial<PersistedSync>): Promise<vo
   }
 }
 
-/** Removes persisted state of the last hydrated user and resets memory. */
-export async function clearPersisted(): Promise<void> {
-  const userId = hydratedUserId ?? (await getCurrentUserId().catch(() => null));
-  if (userId) await SecureStore.deleteItemAsync(keyFor(userId), STORE_OPTIONS).catch(() => undefined);
+/** Drops the in-memory state (sign-out). The keychain copy stays, so the same user resumes on sign-in. */
+export function resetMemory(): void {
   persisted = EMPTY;
   hydratedUserId = undefined;
   state = INITIAL_STATE;
   for (const l of [...listeners]) l();
+}
+
+/** Deletes a user's persisted sync state (account deletion) and resets memory. */
+export async function clearPersisted(userId: string | null): Promise<void> {
+  if (userId) await SecureStore.deleteItemAsync(keyFor(userId), STORE_OPTIONS).catch(() => undefined);
+  resetMemory();
 }

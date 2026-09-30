@@ -39,3 +39,16 @@ export async function markOnboarded(userId: string): Promise<void> {
     // flag stays in memory for this run
   }
 }
+
+/** Forgets the onboarding flag of a user (account deletion). */
+export async function unmarkOnboarded(userId: string): Promise<void> {
+  const current = usePrefs.getState().onboarded;
+  if (!current.includes(userId)) return;
+  const next = current.filter(id => id !== userId);
+  usePrefs.setState({ onboarded: next });
+  try {
+    await SecureStore.setItemAsync(KEY, JSON.stringify(next), OPTIONS);
+  } catch {
+    // flag is gone from memory for this run
+  }
+}

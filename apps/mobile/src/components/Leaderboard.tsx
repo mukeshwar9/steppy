@@ -44,20 +44,20 @@ function LeaderboardRow(props: { entry: LeaderboardEntry; isMe: boolean; period:
     >
       <RankBadge rank={entry.rank} />
       <Avatar name={entry.displayName} highlight={isMe} />
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
         <AppText variant="bodyStrong" numberOfLines={1}>
           {entry.displayName}
           {isMe ? "  (you)" : ""}
         </AppText>
-        <AppText variant="caption" muted numberOfLines={1}>
+        <AppText variant="caption" muted numberOfLines={2}>
           {sourceLabel(entry.stepSource)} · {fresh.text}
           {fresh.stale && entry.lastSyncedAt !== null ? " ⚠" : ""}
         </AppText>
       </View>
-      <View style={{ alignItems: "flex-end" }}>
-        <AppText variant="steps">{formatSteps(entry.steps)}</AppText>
+      <View style={{ alignItems: "flex-end", flexShrink: 0 }}>
+        <AppText variant="steps" numberOfLines={1}>{formatSteps(entry.steps)}</AppText>
         {showAverage ? (
-          <AppText variant="caption" muted>
+          <AppText variant="caption" muted numberOfLines={1}>
             avg {formatSteps(entry.dailyAverage)}/day
           </AppText>
         ) : null}

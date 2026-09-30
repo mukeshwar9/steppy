@@ -28,12 +28,29 @@ export const useSession = create<SessionState>(() => ({
   user: null
 }));
 
-async function readJson<T>(key: string): Promise<T | null> {
+/** missing: nothing stored (or unparseable, so unusable); error: the keychain could not be read. */
+export type ReadResult<T> = { status: "ok"; value: T } | { status: "missing" } | { status: "error" };
+
+/** Thrown when the saved session cannot be read from the keychain (for example a locked device). Never means "signed out". */
+export class SessionReadError extends Error {
+  constructor() {
+    super("Couldn't read your saved session. Try again in a moment.");
+    this.name = "SessionReadError";
+  }
+}
+
+async function readJson<T>(key: string): Promise<ReadResult<T>> {
+  let raw: string | null;
   try {
-    const raw = await SecureStore.getItemAsync(key, STORE_OPTIONS);
-    return raw ? (JSON.parse(raw) as T) : null;
+    raw = await SecureStore.getItemAsync(key, STORE_OPTIONS);
   } catch {
-    return null;
+    return { status: "error" };
+  }
+  if (!raw) return { status: "missing" };
+  try {
+    return { status: "ok", value: JSON.parse(raw) as T };
+  } catch {
+    return { status: "missing" };
   }
 }
 
@@ -54,23 +71,48 @@ async function deleteKey(key: string): Promise<void> {
 }
 
 let hydration: Promise<void> | null = null;
+/** True once a keychain read succeeded. A failed read is never cached, so it is retried. */
+let loaded = false;
 
-/** Loads the stored session once. Safe to call repeatedly and from background tasks. */
+/**
+ * Loads the stored session once. Safe to call repeatedly and from background tasks. A keychain
+ * read error is not cached (the next call retries) and leaves the stored tokens untouched; the
+ * store still flips to `hydrated` so the UI is not stuck on the splash screen.
+ */
 export function hydrateSession(): Promise<void> {
   if (!hydration) {
-    hydration = (async () => {
+    const run = (async () => {
       const [tokens, user] = await Promise.all([readJson<Tokens>(TOKENS_KEY), readJson<User>(USER_KEY)]);
-      if (tokens?.accessToken && tokens.refreshToken && user) {
-        useSession.setState({ hydrated: true, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user });
+      if (tokens.status === "error" || user.status === "error") {
+        hydration = null;
+        useSession.setState({ hydrated: true });
+        return;
+      }
+      loaded = true;
+      if (tokens.status === "ok" && tokens.value.accessToken && tokens.value.refreshToken && user.status === "ok") {
+        useSession.setState({
+          hydrated: true,
+          accessToken: tokens.value.accessToken,
+          refreshToken: tokens.value.refreshToken,
+          user: user.value
+        });
       } else {
         useSession.setState({ hydrated: true });
       }
     })();
+    hydration = run;
   }
   return hydration;
 }
 
+/** Hydrates and throws SessionReadError when the keychain could not be read. */
+async function ensureLoaded(): Promise<void> {
+  await hydrateSession();
+  if (!loaded && !useSession.getState().accessToken) throw new SessionReadError();
+}
+
 export async function setSession(auth: AuthResponse): Promise<void> {
+  loaded = true;
   useSession.setState({
     hydrated: true,
     accessToken: auth.accessToken,
@@ -97,10 +139,13 @@ export async function clearSession(): Promise<void> {
 /**
  * Re-reads tokens from the keychain. Another JS context (a background task) may have refreshed
  * them since this one loaded; refresh tokens rotate, so adopt the newest pair before refreshing.
+ * Returns "error" when the keychain could not be read (callers must keep the session then).
  */
-export async function reloadTokensFromStorage(): Promise<Tokens | null> {
-  const tokens = await readJson<Tokens>(TOKENS_KEY);
-  if (tokens?.accessToken && tokens.refreshToken) {
+export async function reloadTokensFromStorage(): Promise<Tokens | null | "error"> {
+  const result = await readJson<Tokens>(TOKENS_KEY);
+  if (result.status === "error") return "error";
+  if (result.status === "ok" && result.value.accessToken && result.value.refreshToken) {
+    const tokens = result.value;
     const current = useSession.getState();
     if (current.accessToken !== tokens.accessToken || current.refreshToken !== tokens.refreshToken) {
       useSession.setState({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
@@ -110,13 +155,13 @@ export async function reloadTokensFromStorage(): Promise<Tokens | null> {
   return null;
 }
 
-/** Id of the signed-in user, or null when signed out. Works outside React. */
+/** Id of the signed-in user, or null when signed out. Works outside React. Throws SessionReadError on a keychain read error. */
 export async function getCurrentUserId(): Promise<string | null> {
-  await hydrateSession();
+  await ensureLoaded();
   return useSession.getState().user?.id ?? null;
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  await hydrateSession();
+  await ensureLoaded();
   return useSession.getState().accessToken;
 }

@@ -13,4 +13,8 @@ export type SyncState = {
   backfillDone: boolean;
   /** Today's steps as last read from the device store, null if unknown. */
   todaySteps: number | null;
+  /** The last backfill read found no steps at all (read access is probably denied); the backfill will retry. */
+  noStepsFound: boolean;
+  /** Health Connect history access is missing, so only the last 30 days can be imported. */
+  historyLimited: boolean;
 };
