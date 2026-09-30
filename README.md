@@ -8,7 +8,7 @@ Steps come from the phone's health store: Apple Health on iOS and Health Connect
 Apple Watch, Galaxy Watch, Pixel Watch, Zepp/Amazfit and most other wearables already write into
 those. On first connect the app imports the last 90 days, so leaderboards are full from day one.
 
-How it is built, and what was kept from the earlier scaffold: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+How it is built, and what was kept from the earlier scaffold: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Which wearables are covered and how fresh data can be: [docs/SOURCES.md](docs/SOURCES.md).
 
 ## Repository
 
