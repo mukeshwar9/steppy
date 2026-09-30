@@ -5,11 +5,15 @@
   "scripts": {
     "dev:api": "pnpm --filter @steppy/api dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm --filter @steppy/health-domain build && pnpm -r typecheck",
+    "typecheck": "pnpm --filter @steppy/core build && pnpm -r typecheck",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
     "db:generate": "pnpm --filter @steppy/api prisma:generate",
-    "db:migrate": "pnpm --filter @steppy/api prisma:migrate"
+    "db:migrate": "pnpm --filter @steppy/api prisma:migrate",
+    "db:start": "scripts/dev-db.sh start",
+    "db:stop": "scripts/dev-db.sh stop",
+    "db:seed": "pnpm --filter @steppy/api db:seed",
+    "test:api": "pnpm --filter @steppy/api test"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

@@ -1,14 +1,29 @@
-import { Controller, Delete, Get, Param, Post, Query, Req, UseGuards, Body } from "@nestjs/common";
-import { JwtAuthGuard, type AuthenticatedRequest } from "../common/auth.js";
-import { FriendRequestDto } from "./friends.dto.js";
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
+import { addFriendSchema, type Friend } from "@steppy/core";
+import type { z } from "zod";
+import { JwtAuthGuard, UserId } from "../common/auth.guard.js";
+import { ZodValidationPipe } from "../common/zod.pipe.js";
 import { FriendsService } from "./friends.service.js";
-@Controller("friends") @UseGuards(JwtAuthGuard)
+
+@Controller("friends")
+@UseGuards(JwtAuthGuard)
 export class FriendsController {
   constructor(private readonly friends: FriendsService) {}
-  @Get() list(@Req() req: AuthenticatedRequest) { return this.friends.list(req.user.id); }
-  @Get("search") search(@Req() req: AuthenticatedRequest, @Query("username") username = "") { return this.friends.search(username, req.user.id); }
-  @Get("requests") requests(@Req() req: AuthenticatedRequest) { return this.friends.requests(req.user.id); }
-  @Post("requests") request(@Req() req: AuthenticatedRequest, @Body() dto: FriendRequestDto) { return this.friends.request(req.user.id, dto.username); }
-  @Post("requests/:id/accept") accept(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.friends.accept(req.user.id, id); }
-  @Delete(":id") remove(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.friends.remove(req.user.id, id); }
+
+  @Get()
+  list(@UserId() userId: string): Promise<Friend[]> {
+    return this.friends.list(userId);
+  }
+
+  @Post()
+  @HttpCode(200)
+  add(@UserId() userId: string, @Body(new ZodValidationPipe(addFriendSchema)) body: z.output<typeof addFriendSchema>): Promise<Friend> {
+    return this.friends.addByCode(userId, body.friendCode);
+  }
+
+  @Delete(":userId")
+  @HttpCode(204)
+  async remove(@UserId() userId: string, @Param("userId") friendId: string): Promise<void> {
+    await this.friends.remove(userId, friendId);
+  }
 }

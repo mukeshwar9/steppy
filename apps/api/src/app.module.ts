@@ -1,12 +1,27 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { EventEmitterModule } from "@nestjs/event-emitter";
-import { CommonModule } from "./common/common.module.js";
 import { AuthModule } from "./auth/auth.module.js";
-import { UsersModule } from "./users/users.module.js";
-import { HealthModule } from "./health/health.module.js";
-import { ActivityModule } from "./activity/activity.module.js";
 import { ChallengesModule } from "./challenges/challenges.module.js";
+import { CommonModule } from "./common/common.module.js";
+import { DemoModule } from "./demo/demo.module.js";
 import { FriendsModule } from "./friends/friends.module.js";
-@Module({ imports: [ConfigModule.forRoot({ isGlobal: true }), EventEmitterModule.forRoot(), CommonModule, AuthModule, UsersModule, HealthModule, ActivityModule, ChallengesModule, FriendsModule] })
+import { GroupsModule } from "./groups/groups.module.js";
+import { HealthController } from "./health.controller.js";
+import { RealtimeModule } from "./realtime/realtime.module.js";
+import { StepsModule } from "./steps/steps.module.js";
+import { UsersModule } from "./users/users.module.js";
+
+@Module({
+  imports: [
+    CommonModule,
+    RealtimeModule,
+    DemoModule,
+    AuthModule,
+    UsersModule,
+    StepsModule,
+    FriendsModule,
+    GroupsModule,
+    ChallengesModule
+  ],
+  controllers: [HealthController]
+})
 export class AppModule {}

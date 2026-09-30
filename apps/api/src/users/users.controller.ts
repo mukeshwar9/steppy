@@ -1,13 +1,36 @@
-import { Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
-import { IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
-import { JwtAuthGuard, type AuthenticatedRequest } from "../common/auth.js";
-import { Req } from "@nestjs/common";
+import { Body, Controller, Get, Patch, UnauthorizedException, UseGuards } from "@nestjs/common";
+import { updateMeSchema, type User } from "@steppy/core";
+import type { z } from "zod";
+import { JwtAuthGuard, UserId } from "../common/auth.guard.js";
+import { toApiUser } from "../common/mappers.js";
 import { PrismaService } from "../common/prisma.service.js";
-class UpdateMeDto { @IsOptional() @IsString() @MaxLength(80) displayName?: string; @IsOptional() @IsString() timezone?: string; @IsOptional() @IsString() avatarUrl?: string; @IsOptional() @IsEnum(["DEVELOPER", "APPLE_HEALTH", "HEALTH_CONNECT", "FITBIT", "GARMIN", "ZEPP", "SAMSUNG_HEALTH"]) primaryProvider?: "DEVELOPER" | "APPLE_HEALTH" | "HEALTH_CONNECT" | "FITBIT" | "GARMIN" | "ZEPP" | "SAMSUNG_HEALTH"; }
+import { assertTimezone } from "../common/timezone.js";
+import { ZodValidationPipe } from "../common/zod.pipe.js";
+
 @Controller("me")
 @UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(private readonly prisma: PrismaService) {}
-  @Get() getMe(@Req() req: AuthenticatedRequest) { return this.prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { id: true, email: true, displayName: true, username: true, avatarUrl: true, timezone: true, primaryProvider: true, createdAt: true } }); }
-  @Patch() update(@Req() req: AuthenticatedRequest, @Body() dto: UpdateMeDto) { return this.prisma.user.update({ where: { id: req.user.id }, data: dto, select: { id: true, email: true, displayName: true, username: true, avatarUrl: true, timezone: true, primaryProvider: true } }); }
+
+  @Get()
+  async me(@UserId() userId: string): Promise<User> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException("Unknown user");
+    return toApiUser(user);
+  }
+
+  @Patch()
+  async update(
+    @UserId() userId: string,
+    @Body(new ZodValidationPipe(updateMeSchema)) body: z.output<typeof updateMeSchema>
+  ): Promise<User> {
+    if (body.timezone) assertTimezone(body.timezone);
+    const exists = await this.prisma.user.count({ where: { id: userId } });
+    if (!exists) throw new UnauthorizedException("Unknown user");
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { displayName: body.displayName, timezone: body.timezone }
+    });
+    return toApiUser(user);
+  }
 }

@@ -1,15 +1,43 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
-import { JwtAuthGuard, type AuthenticatedRequest } from "../common/auth.js";
+import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
+import { createChallengeSchema, type ChallengeDetail, type ChallengeSummary } from "@steppy/core";
+import type { z } from "zod";
+import { JwtAuthGuard, UserId } from "../common/auth.guard.js";
+import { ZodValidationPipe } from "../common/zod.pipe.js";
 import { ChallengesService } from "./challenges.service.js";
-import { CreateChallengeDto, InviteChallengeDto } from "./challenges.dto.js";
-@Controller("challenges") @UseGuards(JwtAuthGuard)
+
+@Controller()
+@UseGuards(JwtAuthGuard)
 export class ChallengesController {
   constructor(private readonly challenges: ChallengesService) {}
-  @Post() create(@Req() req: AuthenticatedRequest, @Body() dto: CreateChallengeDto) { return this.challenges.create(req.user.id, dto); }
-  @Get() list(@Req() req: AuthenticatedRequest) { return this.challenges.list(req.user.id); }
-  @Get(":id") get(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.challenges.get(req.user.id, id); }
-  @Get(":id/leaderboard") leaderboard(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.challenges.get(req.user.id, id).then(result => result.leaderboard); }
-  @Post(":id/join") join(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.challenges.join(req.user.id, id); }
-  @Post(":id/invite") invite(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() dto: InviteChallengeDto) { return this.challenges.invite(req.user.id, id, dto); }
-  @Post(":id/leave") leave(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.challenges.leave(req.user.id, id); }
+
+  @Get("groups/:id/challenges")
+  list(@UserId() userId: string, @Param("id") id: string): Promise<ChallengeSummary[]> {
+    return this.challenges.listForGroup(id, userId);
+  }
+
+  @Post("groups/:id/challenges")
+  create(
+    @UserId() userId: string,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(createChallengeSchema)) body: z.output<typeof createChallengeSchema>
+  ): Promise<ChallengeDetail> {
+    return this.challenges.create(id, userId, body);
+  }
+
+  @Get("challenges/:id")
+  get(@UserId() userId: string, @Param("id") id: string): Promise<ChallengeDetail> {
+    return this.challenges.get(id, userId);
+  }
+
+  @Post("challenges/:id/join")
+  @HttpCode(200)
+  join(@UserId() userId: string, @Param("id") id: string): Promise<ChallengeDetail> {
+    return this.challenges.join(id, userId);
+  }
+
+  @Post("challenges/:id/leave")
+  @HttpCode(200)
+  leave(@UserId() userId: string, @Param("id") id: string): Promise<ChallengeDetail> {
+    return this.challenges.leave(id, userId);
+  }
 }

@@ -1,48 +1,239 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { EventEmitter2, OnEvent } from "@nestjs/event-emitter";
-import { rankChallengeRows } from "@steppy/health-domain";
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Inject } from "@nestjs/common";
+import type { Challenge, ChallengeParticipant, User } from "@prisma/client";
+import {
+  challengeStatus,
+  challengeWindow,
+  dateRange,
+  leadersOf,
+  localDateInZone,
+  rankBySteps,
+  type ChallengeDetail,
+  type ChallengeStanding,
+  type ChallengeSummary,
+  type CreateChallengeRequest
+} from "@steppy/core";
+import { Clock } from "../common/clock.js";
+import { APP_CONFIG, type AppConfig } from "../common/config.js";
+import { MEMBER_SELECT, toMember } from "../common/mappers.js";
 import { PrismaService } from "../common/prisma.service.js";
-import { addDays } from "../common/date.js";
-import type { CreateChallengeDto, InviteChallengeDto } from "./challenges.dto.js";
+import { dailyRows, sumSteps } from "../common/step-totals.js";
+import { isValidLocalDate } from "../common/timezone.js";
+import { GroupsService } from "../groups/groups.service.js";
+import { RealtimeService } from "../realtime/realtime.service.js";
 
-function localDateAt(date: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
-  const get = (type: string) => parts.find(part => part.type === type)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")}`;
+type MemberUser = Pick<User, "id" | "displayName" | "stepSource" | "lastSyncedAt">;
+type ChallengeFull = Challenge & { participants: Array<ChallengeParticipant & { user: MemberUser }> };
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function defaultChallengeName(kind: "WEEKLY" | "MONTHLY", startDate: string): string {
+  const month = MONTHS[Number(startDate.slice(5, 7)) - 1] ?? "";
+  return `${kind === "WEEKLY" ? "Weekly" : "Monthly"} challenge · ${month} ${Number(startDate.slice(8, 10))}`;
 }
 
 @Injectable()
-export class ChallengesService {
-  constructor(private readonly prisma: PrismaService, private readonly events: EventEmitter2) {}
-  async create(userId: string, dto: CreateChallengeDto) {
-    const challenge = await this.prisma.challenge.create({ data: { creatorId: userId, name: dto.name, description: dto.description, startAt: new Date(dto.startAt), endAt: new Date(dto.endAt), timezone: dto.timezone, participants: { create: { userId } } } });
-    await this.refresh(challenge.id); return challenge;
-  }
-  list(userId: string) { return this.prisma.challenge.findMany({ where: { participants: { some: { userId } } }, orderBy: { startAt: "desc" }, select: { id: true, name: true, description: true, startAt: true, endAt: true, timezone: true, status: true, participants: { select: { userId: true } } } }); }
-  async get(userId: string, challengeId: string) { await this.assertParticipant(userId, challengeId); const challenge = await this.prisma.challenge.findUnique({ where: { id: challengeId } }); if (!challenge) throw new NotFoundException("Challenge not found"); return { ...challenge, leaderboard: await this.leaderboard(challengeId) }; }
-  async join(userId: string, challengeId: string) { const challenge = await this.prisma.challenge.findUnique({ where: { id: challengeId } }); if (!challenge) throw new NotFoundException("Challenge not found"); if (challenge.endAt < new Date()) throw new BadRequestException("Challenge has ended"); await this.prisma.challengeParticipant.upsert({ where: { challengeId_userId: { challengeId, userId } }, create: { challengeId, userId }, update: {} }); await this.refresh(challengeId); return this.leaderboard(challengeId); }
-  async invite(userId: string, challengeId: string, dto: InviteChallengeDto) { await this.assertParticipant(userId, challengeId); const invitee = await this.prisma.user.findUnique({ where: { username: dto.username }, select: { id: true } }); if (!invitee) throw new NotFoundException("User not found"); await this.prisma.challengeParticipant.upsert({ where: { challengeId_userId: { challengeId, userId: invitee.id } }, create: { challengeId, userId: invitee.id }, update: {} }); await this.refresh(challengeId); return { invited: true }; }
-  async leave(userId: string, challengeId: string) { await this.assertParticipant(userId, challengeId); await this.prisma.challengeParticipant.delete({ where: { challengeId_userId: { challengeId, userId } } }); return { left: true }; }
-  async leaderboard(challengeId: string) {
-    const challenge = await this.prisma.challenge.findUnique({ where: { id: challengeId }, include: { participants: { include: { user: { select: { id: true, username: true, displayName: true, avatarUrl: true } } } } } });
-    if (!challenge) throw new NotFoundException("Challenge not found");
-    const totals = await this.prisma.challengeDailyTotal.groupBy({ by: ["userId"], where: { challengeId }, _sum: { steps: true } });
-    const rows = challenge.participants.map(participant => ({ userId: participant.userId, displayName: participant.user.displayName, username: participant.user.username, avatarUrl: participant.user.avatarUrl, steps: totals.find(total => total.userId === participant.userId)?._sum.steps ?? 0 }));
-    const ranked = rankChallengeRows(rows);
-    return ranked.map((row, index) => ({ ...row, differenceAbove: index > 0 ? row.steps - ranked[index - 1]!.steps : null, differenceBelow: index < ranked.length - 1 ? row.steps - ranked[index + 1]!.steps : null }));
-  }
-  @OnEvent("activity.updated")
-  async refreshForUser(event: { userId: string }) { const challenges = await this.prisma.challenge.findMany({ where: { participants: { some: { userId: event.userId } }, endAt: { gte: new Date() } }, select: { id: true } }); for (const challenge of challenges) await this.refresh(challenge.id); }
-  async refresh(challengeId: string) {
-    const challenge = await this.prisma.challenge.findUnique({ where: { id: challengeId }, include: { participants: true } }); if (!challenge) return;
-    const start = localDateAt(challenge.startAt, challenge.timezone), end = localDateAt(challenge.endAt, challenge.timezone);
-    await this.prisma.challenge.update({ where: { id: challengeId }, data: { status: challenge.endAt < new Date() ? "COMPLETED" : challenge.startAt > new Date() ? "UPCOMING" : "ACTIVE" } });
-    for (const participant of challenge.participants) {
-      const activities = await this.prisma.dailyActivity.findMany({ where: { userId: participant.userId, localDate: { gte: start, lte: end } }, select: { id: true, localDate: true, steps: true } });
-      await this.prisma.challengeDailyTotal.deleteMany({ where: { challengeId, userId: participant.userId } });
-      if (activities.length) await this.prisma.challengeDailyTotal.createMany({ data: activities.map(activity => ({ challengeId, userId: participant.userId, activityId: activity.id, localDate: activity.localDate, steps: activity.steps })) });
+export class ChallengesService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ChallengesService.name);
+  private timer: NodeJS.Timeout | null = null;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly clock: Clock,
+    private readonly groups: GroupsService,
+    private readonly realtime: RealtimeService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig
+  ) {}
+
+  onModuleInit(): void {
+    if (this.config.finalizerIntervalMs > 0) {
+      this.timer = setInterval(() => {
+        this.finalizeDue().catch((error) => this.logger.error(`finalizer failed: ${String(error)}`));
+      }, this.config.finalizerIntervalMs);
+      this.timer.unref();
     }
-    this.events.emit("challenge.leaderboard.updated", { challengeId, updatedAt: new Date().toISOString(), participants: await this.leaderboard(challengeId) });
   }
-  private async assertParticipant(userId: string, challengeId: string) { const participant = await this.prisma.challengeParticipant.findUnique({ where: { challengeId_userId: { challengeId, userId } } }); if (!participant) throw new ForbiddenException("Challenge access denied"); }
+
+  onModuleDestroy(): void {
+    if (this.timer) clearInterval(this.timer);
+  }
+
+  /** Finalizes every challenge that has settled and has no winners stored yet. Returns the count. */
+  async finalizeDue(): Promise<number> {
+    const pending = await this.prisma.challenge.findMany({ where: { finalizedAt: null } });
+    const now = this.clock.now();
+    let count = 0;
+    for (const c of pending) {
+      if (challengeStatus(c, now) === "FINISHED" && (await this.finalize(c))) count++;
+    }
+    return count;
+  }
+
+  private async finalize(challenge: Challenge): Promise<boolean> {
+    const participants = await this.prisma.challengeParticipant.findMany({
+      where: { challengeId: challenge.id },
+      select: { userId: true }
+    });
+    const totals = await sumSteps(this.prisma, participants.map((p) => p.userId), challenge.startDate, challenge.endDate);
+    const winnerIds = leadersOf(participants.map((p) => ({ userId: p.userId, steps: totals.get(p.userId)?.steps ?? 0 })));
+    const claimed = await this.prisma.challenge.updateMany({
+      where: { id: challenge.id, finalizedAt: null },
+      data: { winnerIds, finalizedAt: this.clock.now() }
+    });
+    if (claimed.count !== 1) return false;
+    this.realtime.emitToGroup(challenge.groupId, "group.updated", { groupId: challenge.groupId, reason: "settled" });
+    return true;
+  }
+
+  async listForGroup(groupId: string, userId: string): Promise<ChallengeSummary[]> {
+    await this.groups.requireMember(groupId, userId);
+    await this.finalizeGroup(groupId);
+    const challenges = await this.prisma.challenge.findMany({
+      where: { groupId },
+      orderBy: [{ createdAt: "desc" }, { startDate: "desc" }],
+      include: { participants: { include: { user: { select: MEMBER_SELECT } } } }
+    });
+    return Promise.all(challenges.map((c) => this.summary(c)));
+  }
+
+  async create(groupId: string, userId: string, input: CreateChallengeRequest): Promise<ChallengeDetail> {
+    const group = await this.groups.requireMember(groupId, userId);
+    const now = this.clock.now();
+    const today = localDateInZone(now, group.timezone);
+    const startDate = input.startDate ?? today;
+    if (!isValidLocalDate(startDate)) throw new BadRequestException(`Invalid startDate: ${startDate}`);
+    if (startDate < today) throw new BadRequestException("startDate may not be in the past");
+    const { endDate } = challengeWindow(input.kind, startDate);
+
+    const members = await this.prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } });
+    const memberIds = new Set(members.map((m) => m.userId));
+    const requested = input.participantIds ?? [...memberIds];
+    if (requested.some((id) => !memberIds.has(id))) throw new BadRequestException("Participants must be group members");
+    const participantIds = [...new Set([userId, ...requested])];
+
+    const challenge = await this.prisma.challenge.create({
+      data: {
+        groupId,
+        name: input.name ?? defaultChallengeName(input.kind, startDate),
+        kind: input.kind,
+        startDate,
+        endDate,
+        timezone: group.timezone,
+        createdById: userId,
+        participants: { create: participantIds.map((id) => ({ userId: id })) }
+      }
+    });
+    this.realtime.emitToGroup(groupId, "group.updated", { groupId, reason: "challenge" });
+    return this.detail(challenge.id);
+  }
+
+  /** Loads the challenge for a group member (404 otherwise) and finalizes it if due. */
+  async get(challengeId: string, userId: string): Promise<ChallengeDetail> {
+    await this.requireAccess(challengeId, userId);
+    return this.detail(challengeId);
+  }
+
+  async join(challengeId: string, userId: string): Promise<ChallengeDetail> {
+    const challenge = await this.requireAccess(challengeId, userId);
+    this.assertOpen(challenge);
+    try {
+      await this.prisma.challengeParticipant.create({ data: { challengeId, userId } });
+    } catch {
+      // already a participant (idempotent)
+      return this.detail(challengeId);
+    }
+    this.realtime.emitToGroup(challenge.groupId, "group.updated", { groupId: challenge.groupId, reason: "challenge" });
+    return this.detail(challengeId);
+  }
+
+  async leave(challengeId: string, userId: string): Promise<ChallengeDetail> {
+    const challenge = await this.requireAccess(challengeId, userId);
+    this.assertOpen(challenge);
+    const { count } = await this.prisma.challengeParticipant.deleteMany({ where: { challengeId, userId } });
+    if (count > 0) {
+      this.realtime.emitToGroup(challenge.groupId, "group.updated", { groupId: challenge.groupId, reason: "challenge" });
+    }
+    return this.detail(challengeId);
+  }
+
+  private assertOpen(challenge: Challenge): void {
+    const status = challengeStatus(challenge, this.clock.now());
+    if (status !== "UPCOMING" && status !== "ACTIVE") throw new BadRequestException("Challenge is no longer open");
+  }
+
+  private async requireAccess(challengeId: string, userId: string): Promise<Challenge> {
+    const challenge = await this.prisma.challenge.findUnique({ where: { id: challengeId } });
+    if (!challenge) throw new NotFoundException("Challenge not found");
+    await this.groups.requireMember(challenge.groupId, userId); // 404 for non-members
+    return challenge;
+  }
+
+  private async finalizeGroup(groupId: string): Promise<void> {
+    const now = this.clock.now();
+    const pending = await this.prisma.challenge.findMany({ where: { groupId, finalizedAt: null } });
+    for (const c of pending) if (challengeStatus(c, now) === "FINISHED") await this.finalize(c);
+  }
+
+  private async load(challengeId: string): Promise<ChallengeFull> {
+    return this.prisma.challenge.findUniqueOrThrow({
+      where: { id: challengeId },
+      include: { participants: { include: { user: { select: MEMBER_SELECT } } } }
+    });
+  }
+
+  /** Standings over startDate..min(endDate, today). Finished challenges use the full window. */
+  private async standings(c: ChallengeFull, today: string): Promise<ChallengeStanding[]> {
+    const to = c.endDate < today ? c.endDate : today;
+    const totals = await sumSteps(this.prisma, c.participants.map((p) => p.userId), c.startDate, to);
+    return rankBySteps(
+      c.participants.map((p) => ({
+        ...toMember(p.user),
+        steps: totals.get(p.userId)?.steps ?? 0,
+        tieBreak: p.user.displayName
+      }))
+    ).map(({ tieBreak: _t, ...s }) => s);
+  }
+
+  private async summary(c: ChallengeFull, standings?: ChallengeStanding[]): Promise<ChallengeSummary> {
+    const now = this.clock.now();
+    const status = challengeStatus(c, now);
+    const today = localDateInZone(now, c.timezone);
+    const st = standings ?? (await this.standings(c, today));
+    const leaderIds = c.finalizedAt ? c.winnerIds : leadersOf(st);
+    return {
+      id: c.id,
+      groupId: c.groupId,
+      name: c.name,
+      kind: c.kind,
+      startDate: c.startDate,
+      endDate: c.endDate,
+      timezone: c.timezone,
+      status,
+      participantCount: c.participants.length,
+      leaderIds,
+      createdById: c.createdById,
+      createdAt: c.createdAt.toISOString()
+    };
+  }
+
+  private async detail(challengeId: string): Promise<ChallengeDetail> {
+    let c = await this.load(challengeId);
+    const now = this.clock.now();
+    if (!c.finalizedAt && challengeStatus(c, now) === "FINISHED") {
+      await this.finalize(c);
+      c = await this.load(challengeId);
+    }
+    const today = localDateInZone(now, c.timezone);
+    const standings = await this.standings(c, today);
+    const summary = await this.summary(c, standings);
+    const to = c.endDate < today ? c.endDate : today;
+    const days = dateRange(c.startDate, to);
+    const rows = await dailyRows(this.prisma, c.participants.map((p) => p.userId), c.startDate, to);
+    return {
+      ...summary,
+      standings,
+      winnerIds: summary.status === "FINISHED" ? c.winnerIds : [],
+      days,
+      daily: standings.map((s) => ({ userId: s.userId, steps: days.map((d) => rows.get(s.userId)?.get(d) ?? null) }))
+    };
+  }
 }

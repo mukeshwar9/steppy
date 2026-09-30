@@ -11,3 +11,4 @@ apps/api/prisma/*.db
 apps/mobile/ios
 apps/mobile/android
 .pgdata
+.tools/

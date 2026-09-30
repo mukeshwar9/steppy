@@ -1,11 +1,8 @@
-import { Global, Module } from "@nestjs/common";
-import { JwtModule } from "@nestjs/jwt";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { Module } from "@nestjs/common";
+import { DemoModule } from "../demo/demo.module.js";
 import { AuthController } from "./auth.controller.js";
 import { AuthService } from "./auth.service.js";
-import { GoogleService } from "./google.service.js";
-import { JwtAuthGuard } from "../common/auth.js";
+import { AuthRateLimitGuard } from "./rate-limit.guard.js";
 
-@Global()
-@Module({ imports: [ConfigModule, JwtModule.registerAsync({ imports: [ConfigModule], inject: [ConfigService], useFactory: (config: ConfigService) => ({ secret: config.getOrThrow<string>("JWT_ACCESS_SECRET") }) })], controllers: [AuthController], providers: [AuthService, GoogleService, JwtAuthGuard], exports: [AuthService, JwtModule, JwtAuthGuard] })
+@Module({ imports: [DemoModule], controllers: [AuthController], providers: [AuthService, AuthRateLimitGuard] })
 export class AuthModule {}
