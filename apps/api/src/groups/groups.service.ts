@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import type { Group, GroupMember, User } from "@prisma/client";
+import { Prisma, type Group, type GroupMember, type User } from "@prisma/client";
 import {
   challengeStatus,
   dateRange,
@@ -108,18 +108,23 @@ export class GroupsService {
     if (existing) return;
     try {
       await this.prisma.groupMember.create({ data: { groupId, userId, role: "MEMBER" } });
-    } catch {
-      return; // concurrent join: already a member
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return; // concurrent join
+      throw error;
     }
     await this.realtime.resubscribeUser(userId);
     this.realtime.emitToGroup(groupId, "group.updated", { groupId, reason: "member" });
   }
 
   async leave(groupId: string, userId: string): Promise<void> {
-    await this.requireMember(groupId, userId);
     const now = this.clock.now();
     const remaining = await this.prisma.$transaction(async (tx) => {
-      await tx.groupMember.delete({ where: { groupId_userId: { groupId, userId } } });
+      // Serialize concurrent leaves of one group; a group deleted meanwhile yields no row.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM "Group" WHERE id = ${groupId} FOR UPDATE`;
+      if (locked.length === 0) throw new NotFoundException("Group not found");
+      const membership = await tx.groupMember.findUnique({ where: { groupId_userId: { groupId, userId } } });
+      if (!membership) throw new NotFoundException("Group not found");
+      await tx.groupMember.delete({ where: { id: membership.id } });
       const challenges = await tx.challenge.findMany({ where: { groupId } });
       const open = challenges.filter((c) => challengeStatus(c, now) !== "FINISHED").map((c) => c.id);
       if (open.length > 0) await tx.challengeParticipant.deleteMany({ where: { userId, challengeId: { in: open } } });
@@ -145,7 +150,7 @@ export class GroupsService {
     if (group.ownerId !== userId) throw new ForbiddenException("Only the owner can rotate the invite code");
     const inviteCode = await uniqueCode(async (code) => (await this.prisma.group.count({ where: { inviteCode: code } })) > 0);
     await this.prisma.group.update({ where: { id: groupId }, data: { inviteCode } });
-    return (await this.detail(groupId)) as GroupSummary;
+    return this.summaryOf(groupId);
   }
 
   async leaderboard(groupId: string, userId: string, period: LeaderboardPeriod): Promise<Leaderboard> {
@@ -196,6 +201,15 @@ export class GroupsService {
         settled
       }))
     };
+  }
+
+  private async summaryOf(groupId: string): Promise<GroupSummary> {
+    const group = await this.prisma.group.findUniqueOrThrow({
+      where: { id: groupId },
+      include: { _count: { select: { members: true } }, challenges: true }
+    });
+    const now = this.clock.now();
+    return this.toSummary(group, group._count.members, group.challenges.filter((c) => challengeStatus(c, now) === "ACTIVE").length);
   }
 
   private async detail(groupId: string): Promise<GroupDetail> {

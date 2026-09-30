@@ -40,7 +40,7 @@ export class DemoService implements OnModuleInit, OnModuleDestroy {
   async ensureSeeded(): Promise<string> {
     const today = localDateInZone(this.clock.now(), this.config.demoTimezone);
     const existing = await this.prisma.group.findFirst({
-      where: { name: DEMO_GROUP_NAME, owner: { email: DEMO_CAPTAIN.email } }
+      where: { name: DEMO_GROUP_NAME, owner: { email: DEMO_CAPTAIN.email, isDemo: true } }
     });
     if (existing && this.seededOn === today) return existing.id;
     this.seeding ??= seedDemo(this.prisma, { now: this.clock.now(), timezone: this.config.demoTimezone })
@@ -69,7 +69,9 @@ export class DemoService implements OnModuleInit, OnModuleDestroy {
       }
     });
     // Guests get no server-generated steps: theirs come from the phone (on-device demo generator or a health store).
-    const synthetic = await this.prisma.user.findMany({ where: { email: { in: SYNTHETIC_USERS.map((u) => u.email) } } });
+    const synthetic = await this.prisma.user.findMany({
+      where: { isDemo: true, email: { in: SYNTHETIC_USERS.map((u) => u.email) } }
+    });
     await this.prisma.friendship.createMany({
       data: synthetic.map((s) => (s.id < user.id ? { userAId: s.id, userBId: user.id } : { userAId: user.id, userBId: s.id })),
       skipDuplicates: true
@@ -87,7 +89,9 @@ export class DemoService implements OnModuleInit, OnModuleDestroy {
 
   /** Adds a plausible amount of steps (scaled by local time of day, none at night) to today's value of the seeded synthetic users only (never guests). */
   async tick(now: Date = this.clock.now()): Promise<number> {
-    const users = await this.prisma.user.findMany({ where: { email: { in: [DEMO_CAPTAIN.email, ...SYNTHETIC_USERS.map((u) => u.email)] } } });
+    const users = await this.prisma.user.findMany({
+      where: { isDemo: true, email: { in: [DEMO_CAPTAIN.email, ...SYNTHETIC_USERS.map((u) => u.email)] } }
+    });
     let updated = 0;
     for (const user of users) {
       const minute = localMinuteOfDay(now, user.timezone);

@@ -8,7 +8,7 @@
     "dev": "../../scripts/with-env.sh nest start --watch",
     "prebuild": "pnpm --filter @steppy/core build && prisma generate",
     "build": "tsc -p tsconfig.build.json",
-    "start": "../../scripts/with-env.sh node dist/main.js",
+    "start": "NODE_ENV=production ../../scripts/with-env.sh node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @steppy/core build && prisma generate",
     "test": "../../scripts/with-env.sh vitest run",

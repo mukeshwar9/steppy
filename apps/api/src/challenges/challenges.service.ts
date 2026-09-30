@@ -1,28 +1,31 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Inject } from "@nestjs/common";
-import type { Challenge, ChallengeParticipant, User } from "@prisma/client";
+import { Prisma, type Challenge, type ChallengeParticipant, type User } from "@prisma/client";
 import {
+  addDays,
   challengeStatus,
   challengeWindow,
-  dateRange,
   leadersOf,
   localDateInZone,
-  rankBySteps,
   type ChallengeDetail,
-  type ChallengeStanding,
+  type ChallengeStatus,
   type ChallengeSummary,
   type CreateChallengeRequest
 } from "@steppy/core";
+import { computeChallengeResult, type ChallengeResult } from "../common/challenge-result.js";
 import { Clock } from "../common/clock.js";
 import { APP_CONFIG, type AppConfig } from "../common/config.js";
-import { MEMBER_SELECT, toMember } from "../common/mappers.js";
+import { MEMBER_SELECT } from "../common/mappers.js";
 import { PrismaService } from "../common/prisma.service.js";
-import { dailyRows, sumSteps } from "../common/step-totals.js";
+import { dailyRows } from "../common/step-totals.js";
 import { isValidLocalDate } from "../common/timezone.js";
 import { GroupsService } from "../groups/groups.service.js";
 import { RealtimeService } from "../realtime/realtime.service.js";
 
 type MemberUser = Pick<User, "id" | "displayName" | "stepSource" | "lastSyncedAt">;
 type ChallengeFull = Challenge & { participants: Array<ChallengeParticipant & { user: MemberUser }> };
+
+/** Challenges may be scheduled at most this many days ahead. */
+const MAX_START_DAYS_AHEAD = 365;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -63,21 +66,30 @@ export class ChallengesService implements OnModuleInit, OnModuleDestroy {
     const now = this.clock.now();
     let count = 0;
     for (const c of pending) {
-      if (challengeStatus(c, now) === "FINISHED" && (await this.finalize(c))) count++;
+      if (challengeStatus(c, now) !== "FINISHED") continue;
+      try {
+        if (await this.finalize(c)) count++;
+      } catch (error) {
+        this.logger.error(`failed to finalize challenge ${c.id}: ${String(error)}`);
+      }
     }
     return count;
   }
 
+  /** Stores winners and a snapshot of the final standings; only one concurrent caller wins the claim. */
   private async finalize(challenge: Challenge): Promise<boolean> {
     const participants = await this.prisma.challengeParticipant.findMany({
       where: { challengeId: challenge.id },
-      select: { userId: true }
+      include: { user: { select: MEMBER_SELECT } }
     });
-    const totals = await sumSteps(this.prisma, participants.map((p) => p.userId), challenge.startDate, challenge.endDate);
-    const winnerIds = leadersOf(participants.map((p) => ({ userId: p.userId, steps: totals.get(p.userId)?.steps ?? 0 })));
+    const result = await computeChallengeResult(this.prisma, participants, challenge.startDate, challenge.endDate);
     const claimed = await this.prisma.challenge.updateMany({
       where: { id: challenge.id, finalizedAt: null },
-      data: { winnerIds, finalizedAt: this.clock.now() }
+      data: {
+        winnerIds: leadersOf(result.standings),
+        finalStandings: result as unknown as Prisma.InputJsonValue,
+        finalizedAt: this.clock.now()
+      }
     });
     if (claimed.count !== 1) return false;
     this.realtime.emitToGroup(challenge.groupId, "group.updated", { groupId: challenge.groupId, reason: "settled" });
@@ -92,7 +104,7 @@ export class ChallengesService implements OnModuleInit, OnModuleDestroy {
       orderBy: [{ createdAt: "desc" }, { startDate: "desc" }],
       include: { participants: { include: { user: { select: MEMBER_SELECT } } } }
     });
-    return Promise.all(challenges.map((c) => this.summary(c)));
+    return this.summaries(challenges);
   }
 
   async create(groupId: string, userId: string, input: CreateChallengeRequest): Promise<ChallengeDetail> {
@@ -102,6 +114,9 @@ export class ChallengesService implements OnModuleInit, OnModuleDestroy {
     const startDate = input.startDate ?? today;
     if (!isValidLocalDate(startDate)) throw new BadRequestException(`Invalid startDate: ${startDate}`);
     if (startDate < today) throw new BadRequestException("startDate may not be in the past");
+    if (startDate > addDays(today, MAX_START_DAYS_AHEAD)) {
+      throw new BadRequestException(`startDate may be at most ${MAX_START_DAYS_AHEAD} days ahead`);
+    }
     const { endDate } = challengeWindow(input.kind, startDate);
 
     const members = await this.prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } });
@@ -137,9 +152,9 @@ export class ChallengesService implements OnModuleInit, OnModuleDestroy {
     this.assertOpen(challenge);
     try {
       await this.prisma.challengeParticipant.create({ data: { challengeId, userId } });
-    } catch {
-      // already a participant (idempotent)
-      return this.detail(challengeId);
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")) throw error;
+      return this.detail(challengeId); // already a participant (idempotent)
     }
     this.realtime.emitToGroup(challenge.groupId, "group.updated", { groupId: challenge.groupId, reason: "challenge" });
     return this.detail(challengeId);
@@ -180,25 +195,7 @@ export class ChallengesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Standings over startDate..min(endDate, today). Finished challenges use the full window. */
-  private async standings(c: ChallengeFull, today: string): Promise<ChallengeStanding[]> {
-    const to = c.endDate < today ? c.endDate : today;
-    const totals = await sumSteps(this.prisma, c.participants.map((p) => p.userId), c.startDate, to);
-    return rankBySteps(
-      c.participants.map((p) => ({
-        ...toMember(p.user),
-        steps: totals.get(p.userId)?.steps ?? 0,
-        tieBreak: p.user.displayName
-      }))
-    ).map(({ tieBreak: _t, ...s }) => s);
-  }
-
-  private async summary(c: ChallengeFull, standings?: ChallengeStanding[]): Promise<ChallengeSummary> {
-    const now = this.clock.now();
-    const status = challengeStatus(c, now);
-    const today = localDateInZone(now, c.timezone);
-    const st = standings ?? (await this.standings(c, today));
-    const leaderIds = c.finalizedAt ? c.winnerIds : leadersOf(st);
+  private toSummary(c: ChallengeFull, status: ChallengeStatus, leaderIds: string[]): ChallengeSummary {
     return {
       id: c.id,
       groupId: c.groupId,
@@ -215,6 +212,40 @@ export class ChallengesService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** Summaries for many challenges with a single step query (no per-challenge round trips). */
+  private async summaries(challenges: ChallengeFull[]): Promise<ChallengeSummary[]> {
+    const now = this.clock.now();
+    const live = challenges.filter((c) => !c.finalizedAt);
+    const userIds = [...new Set(live.flatMap((c) => c.participants.map((p) => p.userId)))];
+    const ranges = live.map((c) => ({ c, to: this.liveEnd(c, now) })).filter((r) => r.to >= r.c.startDate);
+    const rows =
+      ranges.length > 0
+        ? await dailyRows(
+            this.prisma,
+            userIds,
+            ranges.reduce((min, r) => (r.c.startDate < min ? r.c.startDate : min), ranges[0]!.c.startDate),
+            ranges.reduce((max, r) => (r.to > max ? r.to : max), ranges[0]!.to)
+          )
+        : new Map<string, Map<string, number>>();
+    return challenges.map((c) => {
+      const status = challengeStatus(c, now);
+      if (c.finalizedAt) return this.toSummary(c, status, c.winnerIds);
+      const to = this.liveEnd(c, now);
+      const totals = c.participants.map((p) => {
+        let steps = 0;
+        const perDay = rows.get(p.userId);
+        if (perDay) for (const d of perDay.keys()) if (d >= c.startDate && d <= to) steps += perDay.get(d) ?? 0;
+        return { userId: p.userId, steps };
+      });
+      return this.toSummary(c, status, leadersOf(totals));
+    });
+  }
+
+  private liveEnd(c: Challenge, now: Date): string {
+    const today = localDateInZone(now, c.timezone);
+    return c.endDate < today ? c.endDate : today;
+  }
+
   private async detail(challengeId: string): Promise<ChallengeDetail> {
     let c = await this.load(challengeId);
     const now = this.clock.now();
@@ -222,18 +253,15 @@ export class ChallengesService implements OnModuleInit, OnModuleDestroy {
       await this.finalize(c);
       c = await this.load(challengeId);
     }
-    const today = localDateInZone(now, c.timezone);
-    const standings = await this.standings(c, today);
-    const summary = await this.summary(c, standings);
-    const to = c.endDate < today ? c.endDate : today;
-    const days = dateRange(c.startDate, to);
-    const rows = await dailyRows(this.prisma, c.participants.map((p) => p.userId), c.startDate, to);
+    const status = challengeStatus(c, now);
+    // Finalized challenges are served from the snapshot so standings always agree with winnerIds.
+    const snapshot = c.finalizedAt ? (c.finalStandings as ChallengeResult | null) : null;
+    const result = snapshot ?? (await computeChallengeResult(this.prisma, c.participants, c.startDate, this.liveEnd(c, now)));
+    const leaderIds = c.finalizedAt ? c.winnerIds : leadersOf(result.standings);
     return {
-      ...summary,
-      standings,
-      winnerIds: summary.status === "FINISHED" ? c.winnerIds : [],
-      days,
-      daily: standings.map((s) => ({ userId: s.userId, steps: days.map((d) => rows.get(s.userId)?.get(d) ?? null) }))
+      ...this.toSummary(c, status, leaderIds),
+      ...result,
+      winnerIds: status === "FINISHED" ? c.winnerIds : []
     };
   }
 }

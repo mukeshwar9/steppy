@@ -1,10 +1,10 @@
-import type { PrismaService } from "./prisma.service.js";
+import type { PrismaClient } from "@prisma/client";
 
 export type StepTotal = { steps: number; daysWithData: number };
 
 /** Sums DailySteps per user over from..to (inclusive, plain string compare on YYYY-MM-DD). */
 export async function sumSteps(
-  prisma: PrismaService,
+  prisma: PrismaClient,
   userIds: string[],
   from: string,
   to: string
@@ -23,7 +23,7 @@ export async function sumSteps(
 
 /** Steps per user per date over from..to: Map<userId, Map<date, steps>>. */
 export async function dailyRows(
-  prisma: PrismaService,
+  prisma: PrismaClient,
   userIds: string[],
   from: string,
   to: string

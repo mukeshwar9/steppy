@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import type { User } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -14,6 +14,10 @@ import { toApiUser } from "../common/mappers.js";
 import { PrismaService } from "../common/prisma.service.js";
 import { assertTimezone } from "../common/timezone.js";
 
+/** demo@steppy.app and *@demo.steppy.app belong to the demo seed and /auth/demo guests. */
+export const isReservedDemoEmail = (email: string): boolean =>
+  email === "demo@steppy.app" || email.endsWith("@demo.steppy.app");
+
 const hashToken = (token: string): string => createHash("sha256").update(token).digest("hex");
 
 @Injectable()
@@ -27,6 +31,7 @@ export class AuthService {
 
   async register(input: z.output<typeof registerSchema>): Promise<AuthResponse> {
     assertTimezone(input.timezone);
+    if (isReservedDemoEmail(input.email)) throw new BadRequestException("This email address is reserved");
     const existing = await this.prisma.user.findUnique({ where: { email: input.email } });
     if (existing) throw new ConflictException("Email already registered");
     const passwordHash = await bcrypt.hash(input.password, this.config.bcryptRounds);

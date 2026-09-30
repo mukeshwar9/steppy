@@ -42,6 +42,22 @@ describe("auth", () => {
     expect(tz.body.message).toContain("Invalid timezone");
   });
 
+  it("rejects reserved demo email addresses for normal registration", async () => {
+    for (const email of ["demo@steppy.app", "Demo@Steppy.app", "anyone@demo.steppy.app", "ava@demo.steppy.app"]) {
+      const res = await http.post("/auth/register", undefined, { ...creds, email });
+      expect(res.status, email).toBe(400);
+    }
+    expect((await http.post("/auth/register", undefined, { ...creds, email: "demo@steppy.app.evil.com" })).status).toBe(201);
+  });
+
+  it("rejects a valid token whose user no longer exists", async () => {
+    const me = await http.register("Gone");
+    expect((await http.get("/me", me.token)).status).toBe(200);
+    await ctx.prisma.user.delete({ where: { id: me.id } });
+    expect((await http.get("/me", me.token)).status).toBe(401);
+    expect((await http.get("/groups", me.token)).status).toBe(401);
+  });
+
   it("logs in with correct credentials only", async () => {
     await http.post("/auth/register", undefined, creds);
     const ok = await http.post("/auth/login", undefined, { email: "ANN@example.com", password: "secret123" });

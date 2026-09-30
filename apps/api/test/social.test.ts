@@ -121,6 +121,37 @@ describe("groups", () => {
     expect((await http.get("/groups", a.token)).body).toEqual([]);
   });
 
+  it("double leave returns 404, not 500", async () => {
+    const a = await http.register("Ann");
+    const b = await http.register("Ben");
+    const g = await http.createGroup(a);
+    await http.joinGroup(b, g.inviteCode);
+    expect((await http.post(`/groups/${g.id}/leave`, b.token)).status).toBe(204);
+    expect((await http.post(`/groups/${g.id}/leave`, b.token)).status).toBe(404);
+    await http.post(`/groups/${g.id}/leave`, a.token);
+    expect((await http.post(`/groups/${g.id}/leave`, a.token)).status).toBe(404); // group is gone
+  });
+
+  it("serializes concurrent leaves: one owner remains, or the group is deleted with no errors", async () => {
+    const a = await http.register("Ann");
+    const b = await http.register("Ben");
+    const c = await http.register("Cy");
+    const g = await http.createGroup(a);
+    await http.joinGroup(b, g.inviteCode);
+    await http.joinGroup(c, g.inviteCode);
+    const both = await Promise.all([http.post(`/groups/${g.id}/leave`, a.token), http.post(`/groups/${g.id}/leave`, b.token)]);
+    expect(both.map((r) => r.status)).toEqual([204, 204]);
+    const detail = await http.get(`/groups/${g.id}`, c.token);
+    expect(detail.body).toMatchObject({ ownerId: c.id, memberCount: 1 });
+    expect(detail.body.members[0].role).toBe("OWNER");
+
+    const x = await http.createGroup(c, "Again");
+    await http.joinGroup(a, x.inviteCode);
+    const all = await Promise.all([http.post(`/groups/${x.id}/leave`, c.token), http.post(`/groups/${x.id}/leave`, a.token)]);
+    expect(all.map((r) => r.status)).toEqual([204, 204]);
+    expect(await ctx.prisma.group.count({ where: { id: x.id } })).toBe(0);
+  });
+
   it("deletes the group when the last member leaves", async () => {
     const a = await http.register("Ann");
     const g = await http.createGroup(a);
@@ -138,6 +169,8 @@ describe("groups", () => {
     const res = await http.post(`/groups/${g.id}/invite-code/rotate`, a.token);
     expect(res.status).toBe(200);
     expect(res.body.inviteCode).not.toBe(g.inviteCode);
+    expect(res.body.members).toBeUndefined();
+    expect(res.body).toMatchObject({ id: g.id, memberCount: 2, ownerId: a.id });
     expect((await http.post("/groups/join", (await http.register("Cy")).token, { inviteCode: g.inviteCode })).status).toBe(404);
   });
 

@@ -115,11 +115,21 @@ describe("PUT /steps", () => {
     expect((await http.put("/steps", undefined, body([{ date: "2026-10-14", steps: 1 }]))).status).toBe(401);
   });
 
+  it("rejects dates older than 120 days in the request timezone", async () => {
+    const a = await http.register("Ann");
+    // today 2026-10-14: oldest allowed is today - 119 = 2026-06-17
+    expect((await http.put("/steps", a.token, body([{ date: "2026-06-16", steps: 1 }]))).status).toBe(400);
+    expect((await http.put("/steps", a.token, body([{ date: "2026-06-17", steps: 1 }]))).status).toBe(200);
+  });
+
   it("GET /me/steps validates ranges", async () => {
     const a = await http.register("Ann");
     expect((await http.get("/me/steps?from=2026-01-01&to=2026-12-31", a.token)).status).toBe(400);
     expect((await http.get("/me/steps?from=2026-10-10&to=2026-10-01", a.token)).status).toBe(400);
     expect((await http.get("/me/steps?from=bad", a.token)).status).toBe(400);
+    expect((await http.get("/me/steps?from=0001-01-01&to=9999-12-31", a.token)).status).toBe(400);
+    expect((await http.get("/me/steps?from=2026-06-17&to=2026-10-14", a.token)).status).toBe(200); // exactly 120 days
+    expect((await http.get("/me/steps?from=2026-06-16&to=2026-10-14", a.token)).status).toBe(400);
     expect((await http.get("/me/steps", a.token)).status).toBe(200);
   });
 });

@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, Injectable, Inject, UnauthorizedExceptio
 import { JwtService } from "@nestjs/jwt";
 import type { Request } from "express";
 import { APP_CONFIG, type AppConfig } from "./config.js";
+import { PrismaService } from "./prisma.service.js";
 
 export type AuthedRequest = Request & { userId: string };
 
@@ -9,20 +10,25 @@ export type AuthedRequest = Request & { userId: string };
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwt: JwtService,
+    private readonly prisma: PrismaService,
     @Inject(APP_CONFIG) private readonly config: AppConfig
   ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthedRequest>();
     const header = request.headers.authorization;
     if (!header?.startsWith("Bearer ")) throw new UnauthorizedException("Missing access token");
+    let userId: string;
     try {
-      const payload = this.jwt.verify<{ sub: string }>(header.slice(7), { secret: this.config.jwtAccessSecret });
-      request.userId = payload.sub;
-      return true;
+      userId = this.jwt.verify<{ sub: string }>(header.slice(7), { secret: this.config.jwtAccessSecret }).sub;
     } catch {
       throw new UnauthorizedException("Invalid access token");
     }
+    // A valid token for a deleted user must not work.
+    const exists = await this.prisma.user.count({ where: { id: userId } });
+    if (!exists) throw new UnauthorizedException("Unknown user");
+    request.userId = userId;
+    return true;
   }
 }
 

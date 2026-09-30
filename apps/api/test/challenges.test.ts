@@ -57,6 +57,12 @@ describe("challenge creation", () => {
     expect((await http.post(`/groups/${g.id}/challenges`, outsider.token, { kind: "WEEKLY" })).status).toBe(404);
   });
 
+  it("rejects start dates more than 365 days ahead", async () => {
+    const { ann, g } = await setup();
+    expect((await http.post(`/groups/${g.id}/challenges`, ann.token, { kind: "WEEKLY", startDate: "2027-10-15" })).status).toBe(400);
+    expect((await http.post(`/groups/${g.id}/challenges`, ann.token, { kind: "WEEKLY", startDate: "2027-10-14" })).status).toBe(201);
+  });
+
   it("uses the group's today for the past check and always includes the creator", async () => {
     const { ann, ben, g } = await setup();
     const res = await http.post(`/groups/${g.id}/challenges`, ann.token, { kind: "WEEKLY", participantIds: [ben.id] });
@@ -155,6 +161,61 @@ describe("finalizer", () => {
     expect([...detail.body.winnerIds].sort()).toEqual([ann.id, ben.id].sort());
     expect(detail.body.standings[2]).toMatchObject({ displayName: "Cy", rank: 3, steps: 5000 });
     expect((await http.post(`/challenges/${id}/join`, cy.token)).status).toBe(400);
+    ctx.clock.set(NOON);
+  });
+
+  it("serves finished standings from the snapshot even when a late backfill arrives", async () => {
+    const { ann, ben, g } = await setup();
+    const created = await http.post(`/groups/${g.id}/challenges`, ann.token, { kind: "WEEKLY" }); // 10-14..10-20
+    const id = created.body.id as string;
+    ctx.clock.set("2026-10-16T12:00:00Z");
+    await http.upload(ann, [{ date: "2026-10-15", steps: 5000 }]);
+    await http.upload(ben, [{ date: "2026-10-14", steps: 1000 }]);
+    ctx.clock.set("2026-10-21T10:00:00Z");
+    expect(await ctx.app.get(ChallengesService).finalizeDue()).toBe(1);
+    const row = await ctx.prisma.challenge.findUniqueOrThrow({ where: { id } });
+    expect(row.finalStandings).toMatchObject({ standings: expect.any(Array), days: expect.any(Array), daily: expect.any(Array) });
+
+    // Ben backfills a never-uploaded settled day (accepted as a first-ever value) that would make him win live.
+    const late = await http.upload(ben, [{ date: "2026-10-16", steps: 50_000 }]);
+    expect(late.accepted).toEqual(["2026-10-16"]);
+    const detail = await http.get(`/challenges/${id}`, ben.token);
+    expect(detail.body.winnerIds).toEqual([ann.id]);
+    expect(detail.body.leaderIds).toEqual(detail.body.winnerIds);
+    expect(detail.body.standings.map((s: { displayName: string; steps: number }) => [s.displayName, s.steps])).toEqual([
+      ["Ann", 5000],
+      ["Ben", 1000],
+      ["Cy", 0]
+    ]);
+    expect(detail.body.days).toHaveLength(7);
+    const list = await http.get(`/groups/${g.id}/challenges`, ben.token);
+    expect(list.body[0].leaderIds).toEqual([ann.id]);
+    ctx.clock.set(NOON);
+  });
+
+  it("finalizeDue logs and continues when one challenge fails", async () => {
+    const { ann, g } = await setup();
+    const first = await http.post(`/groups/${g.id}/challenges`, ann.token, { kind: "WEEKLY" });
+    await http.post(`/groups/${g.id}/challenges`, ann.token, { kind: "WEEKLY", name: "Second" });
+    ctx.clock.set("2026-10-21T10:00:00Z");
+    const participants = ctx.prisma.challengeParticipant;
+    const original = participants.findMany.bind(participants);
+    let failed = false;
+    (participants as unknown as { findMany: unknown }).findMany = (args: { where?: { challengeId?: string } }) => {
+      if (!failed && args.where?.challengeId) {
+        failed = true;
+        return Promise.reject(new Error("boom"));
+      }
+      return original(args as never);
+    };
+    try {
+      expect(await ctx.app.get(ChallengesService).finalizeDue()).toBe(1);
+    } finally {
+      (participants as unknown as { findMany: unknown }).findMany = original;
+    }
+    expect(await ctx.prisma.challenge.count({ where: { finalizedAt: null } })).toBe(1);
+    expect(await ctx.app.get(ChallengesService).finalizeDue()).toBe(1);
+    expect(first.status).toBe(201);
     ctx.clock.set(NOON);
   });
 

@@ -26,3 +26,9 @@ export function isValidLocalDate(date: string): boolean {
   const d = new Date(`${date}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === date;
 }
+
+/** Number of calendar days in from..to inclusive, computed arithmetically (no iteration); 0 when from > to. */
+export function daySpan(from: string, to: string): number {
+  const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`);
+  return ms < 0 ? 0 : Math.round(ms / 86_400_000) + 1;
+}

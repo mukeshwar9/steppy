@@ -116,17 +116,19 @@ model DailySteps {
 }
 
 model Challenge {
-  id          String        @id @default(cuid())
-  groupId     String
-  name        String
-  kind        ChallengeKind
-  startDate   String
-  endDate     String
-  timezone    String
-  createdById String
-  createdAt   DateTime      @default(now())
-  finalizedAt DateTime?
-  winnerIds   String[]
+  id             String        @id @default(cuid())
+  groupId        String
+  name           String
+  kind           ChallengeKind
+  startDate      String
+  endDate        String
+  timezone       String
+  createdById    String
+  createdAt      DateTime      @default(now())
+  finalizedAt    DateTime?
+  winnerIds      String[]
+  /// Snapshot ({standings, days, daily}) taken when the challenge is finalized; served for FINISHED challenges.
+  finalStandings Json?
 
   group        Group                  @relation(fields: [groupId], references: [id], onDelete: Cascade)
   createdBy    User                   @relation(fields: [createdById], references: [id], onDelete: Cascade)

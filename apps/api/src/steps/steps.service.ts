@@ -2,7 +2,6 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import {
   MAX_UPLOAD_DAYS,
   addDays,
-  dateRange,
   isDaySettled,
   localDateInZone,
   type DailySteps,
@@ -12,7 +11,7 @@ import {
 } from "@steppy/core";
 import { Clock } from "../common/clock.js";
 import { PrismaService } from "../common/prisma.service.js";
-import { assertTimezone, isValidLocalDate } from "../common/timezone.js";
+import { assertTimezone, daySpan, isValidLocalDate } from "../common/timezone.js";
 import { RealtimeService } from "../realtime/realtime.service.js";
 
 @Injectable()
@@ -29,11 +28,13 @@ export class StepsService {
     const today = localDateInZone(now, input.timezone);
 
     // Last value wins for duplicated dates within one request.
+    const oldest = addDays(today, -(MAX_UPLOAD_DAYS - 1));
     const byDate = new Map<string, number>();
     for (const day of input.days) {
       if (!isValidLocalDate(day.date)) throw new BadRequestException(`Invalid date: ${day.date}`);
       // One day of slack for clock skew between phone and server.
       if (day.date > addDays(today, 1)) throw new BadRequestException(`Date is in the future: ${day.date}`);
+      if (day.date < oldest) throw new BadRequestException(`Date is older than ${MAX_UPLOAD_DAYS} days: ${day.date}`);
       byDate.set(day.date, day.steps);
     }
     const dates = [...byDate.keys()].sort();
@@ -83,7 +84,7 @@ export class StepsService {
     const start = from ?? addDays(end, -29);
     if (!isValidLocalDate(start) || !isValidLocalDate(end)) throw new BadRequestException("Invalid date");
     if (start > end) throw new BadRequestException("from must not be after to");
-    if (dateRange(start, end).length > MAX_UPLOAD_DAYS) {
+    if (daySpan(start, end) > MAX_UPLOAD_DAYS) {
       throw new BadRequestException(`Range is limited to ${MAX_UPLOAD_DAYS} days`);
     }
     const rows = await this.prisma.dailySteps.findMany({

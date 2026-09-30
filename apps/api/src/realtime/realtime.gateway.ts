@@ -2,11 +2,11 @@ import { Inject, Logger } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConnectedSocket, OnGatewayInit, SubscribeMessage, WebSocketGateway } from "@nestjs/websockets";
 import type { Namespace, Socket } from "socket.io";
-import { APP_CONFIG, type AppConfig } from "../common/config.js";
+import { APP_CONFIG, corsOrigins, type AppConfig } from "../common/config.js";
 import { PrismaService } from "../common/prisma.service.js";
 import { RealtimeService, groupRoom, userRoom } from "./realtime.service.js";
 
-@WebSocketGateway({ namespace: "/realtime", cors: { origin: true, credentials: true } })
+@WebSocketGateway({ namespace: "/realtime", cors: { origin: corsOrigins(), credentials: true } })
 export class RealtimeGateway implements OnGatewayInit {
   private readonly logger = new Logger(RealtimeGateway.name);
 

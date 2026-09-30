@@ -11,11 +11,27 @@ USER_NAME=steppy
 PASSWORD=steppy
 DATABASES=(steppy steppy_test)
 
-use_docker() { command -v docker >/dev/null 2>&1; }
+# Docker mode needs the binary and a reachable daemon; otherwise local Postgres binaries are used.
+use_docker() { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }
+
+# Client helpers: inside the container in docker mode (no host pg tools needed), host binaries otherwise.
+dc() { (cd "$ROOT" && docker compose exec -T -e PGPASSWORD=$PASSWORD postgres "$@"); }
+pg_ready() {
+  if use_docker; then dc pg_isready -U $USER_NAME >/dev/null 2>&1
+  else PGPASSWORD=$PASSWORD pg_isready -h localhost -p $PORT -U $USER_NAME >/dev/null 2>&1; fi
+}
+pg_query() {
+  if use_docker; then dc psql -U $USER_NAME -d postgres -tAc "$1"
+  else PGPASSWORD=$PASSWORD psql -h localhost -p $PORT -U $USER_NAME -d postgres -tAc "$1"; fi
+}
+pg_createdb() {
+  if use_docker; then dc createdb -U $USER_NAME "$1"
+  else PGPASSWORD=$PASSWORD createdb -h localhost -p $PORT -U $USER_NAME "$1"; fi
+}
 
 wait_ready() {
   for _ in $(seq 1 60); do
-    if PGPASSWORD=$PASSWORD pg_isready -h localhost -p $PORT -U $USER_NAME >/dev/null 2>&1; then return 0; fi
+    if pg_ready; then return 0; fi
     sleep 1
   done
   echo "Postgres did not become ready" >&2
@@ -24,9 +40,9 @@ wait_ready() {
 
 ensure_databases() {
   for db in "${DATABASES[@]}"; do
-    exists=$(PGPASSWORD=$PASSWORD psql -h localhost -p $PORT -U $USER_NAME -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" || true)
+    exists=$(pg_query "SELECT 1 FROM pg_database WHERE datname='$db'" || true)
     if [ "$exists" != "1" ]; then
-      PGPASSWORD=$PASSWORD createdb -h localhost -p $PORT -U $USER_NAME "$db"
+      pg_createdb "$db"
       echo "created database $db"
     fi
   done
@@ -68,7 +84,9 @@ stop() {
 }
 
 status() {
-  if PGPASSWORD=$PASSWORD pg_isready -h localhost -p $PORT -U $USER_NAME; then return 0; else return 1; fi
+  if pg_ready; then echo "postgres accepting connections on localhost:$PORT"; return 0; fi
+  echo "postgres not ready on localhost:$PORT"
+  return 1
 }
 
 reset() {

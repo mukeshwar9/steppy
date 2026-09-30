@@ -1,7 +1,9 @@
-import type { PrismaClient, User } from "@prisma/client";
+import type { Prisma, PrismaClient, User } from "@prisma/client";
 import { BACKFILL_DAYS, addDays, challengeWindow, dateRange, leadersOf, localDateInZone, periodRange } from "@steppy/core";
 import bcrypt from "bcryptjs";
+import { computeChallengeResult } from "../common/challenge-result.js";
 import { uniqueCode } from "../common/codes.js";
+import { MEMBER_SELECT } from "../common/mappers.js";
 import { DEMO_CAPTAIN, DEMO_GROUP_NAME, DEMO_PASSWORD, SYNTHETIC_USERS, cumulativeFraction, dayTotal, localMinuteOfDay, profileFor } from "./profiles.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -43,8 +45,11 @@ export async function seedDemo(prisma: PrismaClient, opts: { now: Date; timezone
 
   const users: User[] = [];
   for (const account of accounts) {
-    let user = await prisma.user.findUnique({ where: { email: account.email } });
+    let user = await prisma.user.findFirst({ where: { email: account.email, isDemo: true } });
     if (!user) {
+      if (await prisma.user.count({ where: { email: account.email } })) {
+        throw new Error(`${account.email} is taken by a non-demo account; remove it before seeding`);
+      }
       passwordHash ??= await bcrypt.hash(DEMO_PASSWORD, 8);
       user = await prisma.user.create({
         data: {
@@ -120,13 +125,19 @@ export async function seedDemo(prisma: PrismaClient, opts: { now: Date; timezone
       skipDuplicates: true
     });
     if (!challenge.finalizedAt && challenge.endDate < addDays(today, -1)) {
-      const sums = await prisma.dailySteps.groupBy({
-        by: ["userId"],
-        where: { userId: { in: users.map((u) => u.id) }, date: { gte: challenge.startDate, lte: challenge.endDate } },
-        _sum: { steps: true }
+      const participants = await prisma.challengeParticipant.findMany({
+        where: { challengeId: challenge.id },
+        include: { user: { select: MEMBER_SELECT } }
       });
-      const winnerIds = leadersOf(sums.map((s) => ({ userId: s.userId, steps: s._sum.steps ?? 0 })));
-      await prisma.challenge.updateMany({ where: { id: challenge.id, finalizedAt: null }, data: { winnerIds, finalizedAt: now } });
+      const result = await computeChallengeResult(prisma, participants, challenge.startDate, challenge.endDate);
+      await prisma.challenge.updateMany({
+        where: { id: challenge.id, finalizedAt: null },
+        data: {
+          winnerIds: leadersOf(result.standings),
+          finalStandings: result as unknown as Prisma.InputJsonValue,
+          finalizedAt: now
+        }
+      });
     }
   }
   return { groupId: group.id };
