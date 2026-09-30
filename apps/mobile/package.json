@@ -2,12 +2,15 @@
   "name": "@steppy/mobile",
   "version": "0.1.0",
   "private": true,
-  "main": "expo/AppEntry.js",
+  "main": "index.ts",
   "scripts": {
     "start": "expo start",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit",
-    "test": "node --test"
+    "test": "vitest run",
+    "prebuild": "expo prebuild",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
