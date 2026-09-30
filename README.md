@@ -1,266 +1,150 @@
 # Steppy
 
-Provider-independent social fitness MVP. Steppy imports daily steps, preserves source provenance, calculates long-term activity statistics, and lets users compete in challenges across device ecosystems.
+Steppy is a step-count leaderboard for groups of friends. Add friends by code, put them in a
+group, and see who walked the most today, this week, this month and over the last three months.
+Groups can run weekly and monthly challenges with live standings and a winner at the end.
 
-## MVP vertical slice
+Steps come from the phone's health store: Apple Health on iOS and Health Connect on Android.
+Apple Watch, Galaxy Watch, Pixel Watch, Zepp/Amazfit and most other wearables already write into
+those. On first connect the app imports the last 90 days, so leaderboards are full from day one.
 
-Implemented path:
+How it is built, and what was kept from the earlier scaffold: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-1. Register/login with email and password.
-2. Connect `DeveloperHealthProvider`.
-3. Start resumable five-year synthetic history import.
-4. Read today, history, and personal statistics.
-5. Create users/friends and challenges.
-6. Join/invite participants.
-7. Recalculate persisted challenge daily totals.
-8. Stream leaderboard updates over Socket.IO after activity changes.
-
-The mobile shell is React Native/Expo TypeScript. Android Health Connect is implemented for read-only daily steps in development builds; Apple Health and cloud providers remain pending.
-
-## Architecture
-
-Modular monolith API with a provider-independent domain package:
-
-- `apps/api`: NestJS REST API, Prisma persistence, authentication, imports, social features, challenge aggregation, WebSockets, OpenAPI.
-- `apps/mobile`: React Native/Expo client shell with React Navigation, TanStack Query, Zustand, and secure token storage.
-- `packages/health-domain`: pure provider contract, source selection, statistics, and leaderboard ranking.
-- `packages/shared`: API-facing validation schemas and DTO types.
-- PostgreSQL: source-of-truth store. Redis is reserved for job coordination/rate limiting when import volume requires it.
-
-### Folder structure
+## Repository
 
 ```text
-apps/
-  api/
-    prisma/schema.prisma
-    src/{auth,users,health,activity,challenges,friends,common}
-  mobile/
-    App.tsx
-    src/{api,store,screens}
-packages/
-  health-domain/src/{provider,dedupe,stats,challenge}
-  shared/src/index.ts
+packages/core   API contract and shared calendar/ranking rules (used by API and app)
+apps/api        NestJS + Prisma + Postgres API with Socket.IO realtime
+apps/mobile     Expo (React Native) app for iOS and Android
+scripts/        dev-db.sh (local Postgres), with-env.sh (loads .env)
 ```
 
-## Data model
+## Requirements
 
-Core tables: `User`, `RefreshToken`, `HealthConnection`, `DailyActivity`, `SyncJob`, `FriendRequest`, `Friendship`, `Challenge`, `ChallengeParticipant`, `ChallengeDailyTotal`, `Achievement`, `UserAchievement`, and `DevicePushToken`.
+- Node 22 and pnpm 10 (`corepack enable`).
+- Postgres 16: either Docker, or Postgres binaries on your PATH (`initdb`, `pg_ctl`, `psql`, for example from Homebrew).
+- For iOS: Xcode with an iOS Simulator runtime, and CocoaPods (see below).
+- For Android: Android SDK (platform 36), NDK 27, and JDK 17 or newer (JDK 21 works).
 
-`DailyActivity` has one canonical row per user/local date. Source metadata retains provider, device, source record ID, and import timestamp. `HealthConnection` stores cursor/range/sync metadata, never provider secrets.
+## Run the API locally
 
-## Health provider contract
-
-```ts
-interface HealthProvider {
-  provider: HealthProviderType;
-  requestPermissions(): Promise<PermissionResult>;
-  getConnectionStatus(): Promise<ConnectionStatus>;
-  getAvailableDateRange(): Promise<DateRange | null>;
-  getDailySteps(startDate: Date, endDate: Date): Promise<DailyStepRecord[]>;
-  sync(options: SyncOptions): Promise<SyncResult>;
-  disconnect(): Promise<void>;
-}
-```
-
-Mobile-only providers implement native adapters and upload normalized daily records. Android Health Connect requests read-only `Steps`, uses platform daily aggregation, and uploads normalized records in batches. OAuth cloud providers will use backend adapters and encrypted server-side credentials.
-
-## Historical synchronization
-
-Developer imports use asynchronous `SyncJob` records. Android Health Connect imports run on-device: the native adapter requests permission, aggregates five years of daily steps, and uploads 250-record batches. Upserts make retries idempotent. Production scale should move cloud-provider work into BullMQ/Redis workers.
-
-Provider sync is eventually consistent. The UI must display `lastSyncedAt`/job progress and never promise wearable real-time data.
-
-## Deduplication
-
-MVP uses an explicit primary source per user. A selected provider owns canonical steps. Secondary providers can be retained as provenance, but their overlapping records never add to totals. Apple Health/Health Connect adapters should request platform aggregate data, which is preferred over summing raw device samples. A future source reconciliation policy can compare coverage/confidence before changing canonical rows.
-
-## Timezones
-
-Activity records store `localDate` and `timezone`. Challenges store a fixed `timezone`; challenge boundaries are converted to local dates in that timezone, inclusive of those dates. This avoids treating UTC midnight as a user's activity day and gives every participant one shared challenge calendar. DST tests must cover provider adapters and challenge boundary conversion.
-
-## Challenges and live leaderboard
-
-`ChallengeDailyTotal` is the persisted aggregate. Activity changes identify active challenges for that user, refresh only affected challenge aggregates, and emit `challenge.leaderboard.updated`. Socket.IO clients authenticate, join only participant challenge rooms, and receive the ordered social DTO. Provider sync remains eventually consistent; leaderboard delivery is near-real-time only after backend ingestion.
-
-## Security/privacy
-
-- Access JWTs are short-lived; refresh tokens are long-lived, rotated, hashed, and never placed in AsyncStorage.
-- Google Sign In is server-verified. Google client IDs are public; no Google client secret is bundled in mobile.
-- Mobile tokens use iOS Keychain/Android Keystore via `expo-secure-store`.
-- DTO validation, ownership checks, participant checks, helmet, CORS, and restricted social DTOs are enabled.
-- Detailed activity endpoints are scoped to `/me`; friend/challenge responses expose totals and approved profile fields only.
-- Do not log OAuth tokens, authorization headers, or raw health payloads.
-- Production deployment requires TLS, secret manager-backed JWT/provider secrets, rate limiting, audit retention, and encrypted provider token storage.
-
-## Local setup
-
-Requirements: Node 22+, pnpm 10+, Docker.
-
-```bash
-cp .env.example .env
+```sh
 pnpm install
-docker compose up -d postgres
-pnpm db:generate
-pnpm db:migrate
-pnpm dev:api
+cp .env.example .env            # dev defaults; DEMO_MODE=true
+pnpm db:start                   # Postgres on localhost:54329 (Docker if running, else local binaries in .pgdata/)
+pnpm db:migrate                 # apply migrations
+pnpm db:seed                    # demo group, synthetic friends, 90 days of history, challenges
+pnpm dev:api                    # http://localhost:3000, watch mode
 ```
 
-API: `http://localhost:3000`; Swagger: `http://localhost:3000/docs`.
+`curl localhost:3000/health` should return `{"ok":true}`. Stop Postgres with `pnpm db:stop`;
+`scripts/dev-db.sh reset` wipes the local data directory.
 
-Run mobile shell:
+Demo accounts after seeding (password `steppy-demo`): `demo@steppy.app` (owns the "Steppy Demo"
+group) and five synthetic friends such as `ava@demo.steppy.app`. With `DEMO_MODE=true` their
+steps grow every minute, so leaderboards move while you watch, and the app's "Try the demo" button
+creates a guest account inside the demo group.
 
-```bash
-cp apps/mobile/.env.example apps/mobile/.env
-# Set EXPO_PUBLIC_API_URL to your Mac LAN IP.
-EXPO_PUBLIC_API_URL=http://YOUR_LAN_IP:3000 pnpm --filter @steppy/mobile start
-```
+## Tests
 
-Android Health Connect requires a development build, not Expo Go:
-
-```bash
-cd apps/mobile
-pnpm exec expo prebuild
-pnpm exec expo run:android
-```
-
-The app requests only `android.permission.health.READ_STEPS`. It does not request write access.
-
-For Android emulator, use `http://10.0.2.2:3000`. For iOS simulator, localhost works. Physical devices need the host LAN IP.
-
-## Example vertical slice API calls
-
-```bash
-# register
-curl -X POST localhost:3000/auth/register -H 'content-type: application/json' \
-  -d '{"email":"alex@example.com","password":"password123","displayName":"Alex","username":"alex"}'
-
-# connect Developer provider, then import five years
-curl -X POST localhost:3000/health/DEVELOPER/connect -H "authorization: Bearer $ACCESS_TOKEN"
-curl -X POST localhost:3000/health/import -H "authorization: Bearer $ACCESS_TOKEN" -H 'content-type: application/json' \
-  -d '{"provider":"DEVELOPER"}'
-
-Google Sign In setup:
-
-```bash
-cp apps/mobile/.env.example apps/mobile/.env
-# Set GOOGLE_CLIENT_IDS in apps/api/.env.
-# Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-# and EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in apps/mobile/.env.
-```
-
-`POST /auth/google` accepts a Google ID token or access token. API verifies Google audience, subject, issuer, and email verification before linking the account.
-
-## Provider status
-
-### IMPLEMENTED
-
-- DeveloperHealthProvider: deterministic five-year fixtures, zero days, 20K+/30K+ days, and source metadata.
-- Provider-independent interface and registry.
-- Android Health Connect read-only Steps adapter with daily aggregation and batched upload.
-- Auth, Google Sign In, user profile, health connections, resumable import job, stats, friends, challenges, Socket.IO leaderboard event.
-- React Native navigation shell and secure token storage.
-
-### PARTIALLY IMPLEMENTED
-
-- Background import currently runs in API process; move to Redis-backed worker before production scale.
-- Refresh-token rotation works but should use a token-ID lookup and device/session management before broad release.
-- Mobile offline mutation queue remains to be added.
-- Rate limiting, push notifications, achievements, privacy preference UI, and provider correction tombstones remain.
-
-### REQUIRES PROVIDER APPROVAL / VERIFICATION
-
-- Fitbit and Garmin cloud OAuth scopes, historical limits, webhooks, and commercial approval.
-- Zepp/Amazfit and Samsung Health API/partner availability.
-- Apple HealthKit native permissions, background delivery, and iOS entitlements.
-- Android Health Connect native permissions, aggregation behavior, and background sync APIs.
-
-### NOT YET IMPLEMENTED
-
-- Apple Health native adapter.
-- Health Connect background/incremental synchronization and provider correction reconciliation.
-- Fitbit/Garmin/Zepp/Samsung adapters.
-- Apple Sign In, password reset, email verification.
-- Full offline queue, push notifications, production job worker, and load testing.
-
-No provider is represented as working until its official API and credentials are verified.
-
-## Testing
-
-```bash
+```sh
+pnpm db:start                   # the API tests use the steppy_test database
+pnpm --filter @steppy/core test # calendar, settle, ranking, challenge rules
+pnpm test:api                   # API integration tests against Postgres
+pnpm --filter @steppy/mobile test  # sync planning, demo generator, app helpers
 pnpm typecheck
-pnpm test
-pnpm build
 ```
 
-Pure domain tests cover source selection and statistics. Add API integration tests against a disposable PostgreSQL database before shipping. Required cases include DST/timezone boundaries, import retries, corrections, duplicate records, provider overlap, challenge ties, join-midway behavior, and authorization.
+Simulator end-to-end flows (Maestro) are described in [apps/mobile/e2e/README.md](apps/mobile/e2e/README.md).
 
-## Phased plan
+## Run the app on the iOS Simulator
 
-1. **Now:** runnable developer vertical slice and core contracts.
-2. **Next:** API integration tests, worker queue, refresh-token session hardening, mobile onboarding/import progress, offline cache.
-3. **Phase 1 providers:** native HealthKit and Health Connect development builds; verify permissions and aggregation behavior on devices.
-4. **Phase 2:** Fitbit OAuth after API approval and scope review.
-5. **Phase 3:** Garmin after API approval.
-6. **Phase 4:** Zepp/Samsung only after feasibility confirmation.
+The native projects are generated from `apps/mobile/app.config.ts`; `ios/` and `android/` are not
+committed.
 
-Stop condition for MVP: two seeded users can import developer history, create/join one challenge, simulate updated activity through the same import pipeline, and receive an ordered leaderboard update without TypeScript/test failures.
+CocoaPods is required. If you don't have it, `brew install cocoapods` is the simplest option. To
+keep it inside the repo instead (works with the macOS system Ruby 2.6):
 
-## Current state and source feasibility (assessed 2026-09-27)
+```sh
+export GEM_HOME="$PWD/.tools/gems" GEM_PATH="$PWD/.tools/gems" PATH="$PWD/.tools/gems/bin:$PATH" LANG=en_US.UTF-8
+gem install --no-document ffi:1.16.3 activesupport:5.2.8.1 minitest:5.15.0 concurrent-ruby:1.1.10 i18n:1.8.11 tzinfo:1.2.11 cocoapods:1.15.2
+```
 
-### Current state
+Then, with the API running:
 
-- Working end to end: the backend MVP with the synthetic Developer provider (register, five-year import, friends, challenges, ranked leaderboard, `challenge.leaderboard.updated` event). Verified locally against Postgres.
-- Android Health Connect: one-shot foreground import during onboarding only. There is no background or incremental sync, and without `READ_HEALTH_DATA_HISTORY` Health Connect returns only about 30 days before the permission grant, not five years.
-- Not implemented: Apple Health (entitlements are empty), WHOOP, and Zepp. `POST /health/{APPLE_HEALTH,ZEPP,...}/connect` returns 501. The mobile app does not consume the Socket.IO leaderboard.
-- Build and tests: `pnpm build` passes. `pnpm test` passes, but only the three `health-domain` tests exist; the API and mobile have none. `pnpm typecheck` fails on a clean checkout (`Cannot find module '@steppy/shared'`) because the root script builds only `health-domain` first.
-- Known defects:
-  - Connecting Health Connect while a Developer import is running leaves Developer canonical rows behind. `runImport` reads `primaryProvider` once, before its loop.
-  - Import jobs run in-process and are not recovered after a restart, so an interrupted job stays `RUNNING` forever.
+```sh
+pnpm --filter @steppy/core build
+cd apps/mobile
+CI=1 npx expo prebuild --platform ios      # generates ios/ and runs pod install (a few minutes)
 
-### Per-source import feasibility
+# Option A: development build with fast refresh (starts Metro)
+npx expo run:ios --device "iPhone 17"
 
-| Source | Path | Steps | Where | Notes |
-|---|---|---|---|---|
-| Apple Watch / iPhone | HealthKit | Yes, via `HKStatisticsCollectionQuery`, which de-dupes watch and phone | On device only | Needs a dev/EAS build, not Expo Go. HealthKit plus background-delivery entitlements. App Store 5.1.1 and 5.1.3. |
-| Android (phone, Galaxy, Pixel) | Health Connect | Yes, via `aggregate` with `COUNT_TOTAL` | On device only | Needs `READ_HEALTH_DATA_HISTORY` and `READ_HEALTH_DATA_IN_BACKGROUND`. Play Health apps declaration plus a permission justification. |
-| Google Fit | Do not integrate | — | — | Sign-ups closed 2024-05-01 and the APIs end in late 2026. The Fit app syncs into Health Connect, so Fit users are covered there. |
-| Helio / Zepp (Amazfit) | Via Apple Health or Health Connect | Yes, indirectly | Phone store | No public cloud API; the partner API is corporate-only. Users must enable Zepp's sync to Apple Health or Health Connect. |
-| WHOOP | Cloud OAuth API v2 | Yes, `cycles.step_count` since 2026-09-23 | Server | Cycles run sleep to sleep, not calendar days. No step webhook, so the server polls. 100 requests/min, 10,000/day. The Sandbox tier allows 10 members. |
+# Option B: standalone Release build for the simulator (no Metro needed)
+xcodebuild -workspace ios/Steppy.xcworkspace -scheme Steppy -configuration Release \
+  -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -derivedDataPath ../../.tools/dd build
+xcrun simctl install booted ../../.tools/dd/Build/Products/Release-iphonesimulator/Steppy.app
+xcrun simctl launch booted com.steppy.app
+```
 
-Aggregating across friends is feasible with the phone as the hub: HealthKit and Health Connect cover Apple Watch, Zepp/Helio, Android and Google Fit users, and WHOOP is the only cloud adapter. Paid aggregators (Terra, Junction and others, about $300–500 a month) still require their on-device SDKs, so they add little for this use case.
+The app talks to `http://localhost:3000` on the iOS Simulator. Set `EXPO_PUBLIC_API_URL` before
+building to point it elsewhere.
 
-### Real-time vs app-open
+### Trying it in the simulator
 
-Nothing is truly real-time.
+- **Quickest:** tap **Try the demo**, then **Use demo steps**. You land in the Steppy Demo group
+  with five friends whose steps move every minute, a live weekly and monthly challenge, and a
+  finished one with a winner.
+- **Real HealthKit path:** create an account, choose **Connect Apple Health** and allow access.
+  The simulator has no step data, so open the **Me** tab and tap **Write sample health data**.
+  It writes 90 days of realistic steps into the simulator's Health app, then syncs. You can also
+  add data by hand in the simulator's Health app (Browse > Activity > Steps > Add Data). This
+  button exists only in non-production builds.
+- **Friends:** create a second account (another simulator, a phone, or `curl`), exchange friend
+  codes on the Friends tab, create a group and share its invite code or link (`steppy://join/<code>`).
 
-- App open: seconds.
-- iOS background: HealthKit background delivery for `stepCount` is capped at hourly, and HealthKit cannot be read while the device is locked.
-- Android background: WorkManager runs every 15 minutes at best. Doze and standby buckets can delay it by hours.
-- Wearable apps (Zepp, Watch) add their own sync delay before steps reach the phone store.
-- WHOOP: freshness is the server's polling interval.
+## Build the Android app
 
-Product framing: "live while open, synced through the day, final next morning". Show `lastSyncedAt` for every participant.
+```sh
+pnpm --filter @steppy/core build
+cd apps/mobile
+export ANDROID_HOME=~/Library/Android/sdk
+CI=1 npx expo prebuild --platform android
+echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+cd android && ./gradlew assembleRelease     # or assembleDebug for a Metro-backed dev build
+```
 
-### Prioritised next steps (one engineer)
+The standalone APK is `apps/mobile/android/app/build/outputs/apk/release/app-release.apk`. It is signed with
+the debug key, so testers can install it directly (`adb install`). It needs Health Connect, which is
+built into Android 14+ and available from the Play Store for Android 9 to 13. The Android emulator reaches the
+host API at `http://10.0.2.2:3000`. For a physical phone, build with
+`EXPO_PUBLIC_API_URL=http://<your-computer's-LAN-IP>:3000` or a hosted API URL.
 
-1. Fix the typecheck script, the primary-switch race, and job recovery on boot: 0.5–1 day.
-2. HealthKit adapter (`@kingstinct/react-native-healthkit`), entitlements, EAS dev build, observer plus background delivery: 3–5 days.
-3. Health Connect history and background permissions, incremental resync of the last 7 days, WorkManager task: 3–4 days.
-4. Sync on app open, `lastSyncedAt` UI, Socket.IO client on the challenge screen: 2–3 days.
-5. Canonical-day service (primary source with fallback, manual-entry filter, settle window) plus API integration tests: 3–4 days.
-6. Silent-push sync nudges (APNs/FCM): 2 days.
-7. BullMQ worker for imports, rate limiting: 2 days.
-8. WHOOP OAuth, poller, webhook-triggered polls, cycle-to-date mapping: 3–5 days.
-9. Store compliance, TestFlight and Play internal testing: 2–3 days, plus about a week of review.
+## How fresh are the numbers?
 
-About 3–4 weeks to a friends beta (steps 1–6 and 9), or 4–6 weeks including WHOOP and the worker.
+Live while you're in the app. Otherwise friends update roughly every 15 to 60 minutes (iOS
+background delivery is hourly at best, Android background work runs every 15+ minutes, and both
+are up to the OS). Each friend shows "updated X ago". Each day becomes final at 10:00 the next
+morning, so late watch syncs still count, and challenge winners are decided once the last day
+is final.
 
-### Open product calls (parked)
+## Production builds
 
-These calls are parked for a decision. Recommendations:
+Build with `STEPPY_PRODUCTION=1` to drop the development-only health write permissions and the
+sample-data button. Run the API with `pnpm --filter @steppy/api build && pnpm --filter @steppy/api start`
+(`NODE_ENV=production`): it refuses to start without a strong `JWT_ACCESS_SECRET` (32+ characters)
+and a `CORS_ORIGIN` list, and `DEMO_MODE` should be off.
 
-- Multiple sources per user: primary source with fallback, never summed.
-- WHOOP: defer to v1.1.
-- Freshness promise: live while open, final next morning.
-- Distribution: private TestFlight and Play internal testing.
-- Build vs buy: build natively rather than use a paid aggregator.
+## What is left before shipping to friends
+
+- **Hosting:** the API needs a public HTTPS host with Postgres (for example Fly.io, Render or
+  Railway with managed Postgres). Only one API instance for now: the finalizer, demo ticker and rate limiter
+  run in-process.
+- **Apple:** an Apple Developer account ($99/year), a HealthKit-enabled App ID, then TestFlight
+  (internal testing needs no App Review; external testers need a short beta review). App Store privacy
+  labels and a privacy policy URL before any public release.
+- **Google:** a Play Console account ($25 one-time), the Health apps declaration and Health Connect
+  permission justification (review can take about a week), then an internal testing track.
+- **Not in v1:** push notifications ("Alex just passed you"), WHOOP/Oura/Google Health cloud
+  sources, password reset and email verification, account deletion in-app, and widgets.
