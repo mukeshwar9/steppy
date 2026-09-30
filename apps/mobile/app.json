@@ -11,13 +11,26 @@
     },
     "android": {
       "package": "com.steppy.app",
-      "permissions": ["android.permission.health.READ_STEPS"]
+      "permissions": [
+        "android.permission.health.READ_STEPS"
+      ]
     },
     "plugins": [
       "expo-secure-store",
       "expo-web-browser",
       "react-native-health-connect",
-      ["expo-build-properties", { "android": { "minSdkVersion": 26, "compileSdkVersion": 36, "targetSdkVersion": 36 } }]
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26,
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
+          }
+        }
+      ],
+      "@kingstinct/react-native-healthkit",
+      "expo-background-task"
     ]
   }
 }
