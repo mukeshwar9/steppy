@@ -86,7 +86,7 @@ roughly every 15 to 60 minutes; each day is final at 10:00 the next morning.*
 | Background, iOS | HealthKit background delivery (hourly) with an observer query registered at launch, plus a `BGTask` via `expo-background-task`. Best effort: iOS decides when to wake the app, and nothing can be read while the phone is locked. |
 | Background, Android | `expo-background-task` (WorkManager, at least 15 minutes apart) reads the last 3 days with the background-read permission. Best effort: Doze and app standby delay it. |
 | Per friend | Every leaderboard row shows "updated X ago" from that member's `lastSyncedAt`, and dims members who have not synced for 90 minutes. |
-| Settling | A day settles at 10:00 the next morning in the uploader's timezone. After that an existing value for that day is frozen, so late edits cannot change results. A day with no value yet can still be filled in by a first-time backfill. |
+| Settling | A day settles at 10:00 the next morning in the uploader's timezone. After that a non-zero value for that day is frozen, so late edits cannot change results. A day with no value yet, or stored as 0, can still be filled in (first-time backfill, health access granted late). |
 
 ## Leaderboards and challenges
 
@@ -114,10 +114,14 @@ With `DEMO_MODE=true` the API seeds a "Steppy Demo" group with five synthetic fr
 captain account (`demo@steppy.app` / `steppy-demo`), 90 days of history, a live weekly and monthly
 challenge and a finished one. A ticker adds plausible steps to the synthetic users every minute
 so leaderboards move while you watch. `POST /auth/demo` (the app's "Try the demo" button) creates
-a guest who joins that group. The guest's own steps come from the phone: either a real health
+a guest who owns a private "Demo group" with the five synthetic friends (friends of the guest, not the captain) and the same three challenges, so guests never see each other. The ticker deletes guests older than 7 days, with their private groups, once per hour. The guest's own steps come from the phone: either a real health
 store or the on-device `DEMO` source, which generates deterministic realistic numbers. On the iOS
 Simulator, development builds can also write 90 days of sample steps into HealthKit so the real
 HealthKit read path can be tried.
+
+## Account deletion
+
+`DELETE /me` leaves every group with the rules of `POST /groups/:id/leave` (owner transfer, empty groups deleted, removed from open challenges), then deletes the user; friendships, steps, refresh tokens and finished-challenge participations cascade. Finished challenge snapshots keep the display name, and challenges the user created pass to the group owner. The user's sockets are disconnected.
 
 ## Security notes
 

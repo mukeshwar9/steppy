@@ -42,8 +42,9 @@ pnpm dev:api                    # http://localhost:3000, watch mode
 
 Demo accounts after seeding (password `steppy-demo`): `demo@steppy.app` (owns the "Steppy Demo"
 group) and five synthetic friends such as `ava@demo.steppy.app`. With `DEMO_MODE=true` their
-steps grow every minute, so leaderboards move while you watch, and the app's "Try the demo" button
-creates a guest account inside the demo group.
+steps grow every minute, so leaderboards move while you watch. The app's "Try the demo" button
+creates a guest account with its own private demo group of the five synthetic friends (guests
+are removed after 7 days).
 
 ## Tests
 
@@ -93,7 +94,7 @@ building to point it elsewhere.
 
 ### Trying it in the simulator
 
-- **Quickest:** tap **Try the demo**, then **Use demo steps**. You land in the Steppy Demo group
+- **Quickest:** tap **Try the demo**, then **Use demo steps**. You land in your own demo group
   with five friends whose steps move every minute, a live weekly and monthly challenge, and a
   finished one with a winner.
 - **Real HealthKit path:** create an account, choose **Connect Apple Health** and allow access.
@@ -147,4 +148,4 @@ and a `CORS_ORIGIN` list, and `DEMO_MODE` should be off.
 - **Google:** a Play Console account ($25 one-time), the Health apps declaration and Health Connect
   permission justification (review can take about a week), then an internal testing track.
 - **Not in v1:** push notifications ("Alex just passed you"), WHOOP/Oura/Google Health cloud
-  sources, password reset and email verification, account deletion in-app, and widgets.
+  sources, password reset and email verification, and widgets.

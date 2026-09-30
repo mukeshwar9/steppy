@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Patch, UnauthorizedException, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Patch, UnauthorizedException, UseGuards } from "@nestjs/common";
 import { updateMeSchema, type User } from "@steppy/core";
 import type { z } from "zod";
+import { AccountService } from "../account/account.service.js";
 import { JwtAuthGuard, UserId } from "../common/auth.guard.js";
 import { toApiUser } from "../common/mappers.js";
 import { PrismaService } from "../common/prisma.service.js";
@@ -10,7 +11,10 @@ import { ZodValidationPipe } from "../common/zod.pipe.js";
 @Controller("me")
 @UseGuards(JwtAuthGuard)
 export class UsersController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly account: AccountService
+  ) {}
 
   @Get()
   async me(@UserId() userId: string): Promise<User> {
@@ -32,5 +36,11 @@ export class UsersController {
       data: { displayName: body.displayName, timezone: body.timezone }
     });
     return toApiUser(user);
+  }
+
+  @Delete()
+  @HttpCode(204)
+  async remove(@UserId() userId: string): Promise<void> {
+    await this.account.deleteAccount(userId);
   }
 }

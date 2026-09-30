@@ -34,4 +34,10 @@ export class RealtimeService {
       for (const room of wanted) socket.join(room);
     }
   }
+
+  /** Disconnects every connected socket of the user (for example after account deletion). */
+  async disconnectUser(userId: string): Promise<void> {
+    if (!this.namespace) return;
+    this.namespace.in(userRoom(userId)).disconnectSockets(true);
+  }
 }

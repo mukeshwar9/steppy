@@ -5,6 +5,8 @@ export type StepProfile = { base: number; weekendFactor: number; restRate: numbe
 
 export const DEMO_PASSWORD = "steppy-demo";
 export const DEMO_GROUP_NAME = "Steppy Demo";
+/** Name of the private group every /auth/demo guest owns. */
+export const DEMO_GUEST_GROUP_NAME = "Demo group";
 export const DEMO_CAPTAIN = { email: "demo@steppy.app", displayName: "Captain Steppy", profile: { base: 9000, weekendFactor: 1.1, restRate: 0.04 } };
 
 export const SYNTHETIC_USERS: Array<{ email: string; displayName: string; profile: StepProfile }> = [

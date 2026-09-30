@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient, User } from "@prisma/client";
+import type { Group, Prisma, PrismaClient, User } from "@prisma/client";
 import { BACKFILL_DAYS, addDays, challengeWindow, dateRange, leadersOf, localDateInZone, periodRange } from "@steppy/core";
 import bcrypt from "bcryptjs";
 import { computeChallengeResult } from "../common/challenge-result.js";
@@ -96,7 +96,21 @@ export async function seedDemo(prisma: PrismaClient, opts: { now: Date; timezone
 
   for (const user of users) await writeDemoSteps(prisma, user, now);
 
-  // Challenges: finished weekly (two weeks back), active weekly and active monthly.
+  await ensureDemoChallenges(prisma, group, users, captain.id, now);
+  return { groupId: group.id };
+}
+
+/**
+ * Idempotent: the three demo challenges of a group (a weekly one finished two weeks ago and finalized with a
+ * snapshot, plus an active weekly and an active monthly), with all `users` participating.
+ */
+export async function ensureDemoChallenges(
+  prisma: PrismaClient,
+  group: Pick<Group, "id" | "timezone">,
+  users: Array<Pick<User, "id">>,
+  createdById: string,
+  now: Date
+): Promise<void> {
   const today = localDateInZone(now, group.timezone);
   const weekStart = periodRange("week", today).from;
   const specs: Array<{ kind: "WEEKLY" | "MONTHLY"; start: string }> = [
@@ -116,7 +130,7 @@ export async function seedDemo(prisma: PrismaClient, opts: { now: Date; timezone
           startDate: spec.start,
           endDate,
           timezone: group.timezone,
-          createdById: captain.id
+          createdById
         }
       });
     }
@@ -140,5 +154,4 @@ export async function seedDemo(prisma: PrismaClient, opts: { now: Date; timezone
       });
     }
   }
-  return { groupId: group.id };
 }

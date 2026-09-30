@@ -92,6 +92,9 @@ export const updateMeSchema = z.object({
   timezone: timezoneSchema.optional()
 });
 export type UpdateMeRequest = z.infer<typeof updateMeSchema>;
+// GET /me -> User. PATCH /me -> User.
+// DELETE /me -> 204: deletes the account and all its data. The user leaves every group first
+// (same rules as POST /groups/:id/leave), and friendships and step history are removed.
 
 // ---------------------------------------------------------------------------
 // Steps ingest and personal history
@@ -107,7 +110,8 @@ export type StepDay = z.infer<typeof stepDaySchema>;
  * PUT /steps: idempotent upsert of daily totals read from the phone health store.
  * Totals come from the store's statistics/aggregate APIs, which already de-duplicate
  * Watch vs phone samples, so the server stores them as-is (never sums sources).
- * A day that has settled (see isDaySettled) and already has a value is frozen and skipped.
+ * A day that has settled (see isDaySettled) and already has a non-zero value is frozen and skipped;
+ * a settled day stored as 0 can still be filled in (for example after health access is granted late).
  */
 export const uploadStepsSchema = z.object({
   source: stepSourceSchema,

@@ -44,11 +44,12 @@ export class StepsService {
     await this.prisma.$transaction(async (tx) => {
       const existing = await tx.dailySteps.findMany({
         where: { userId, date: { in: dates } },
-        select: { date: true }
+        select: { date: true, steps: true }
       });
-      const hasRow = new Set(existing.map((r) => r.date));
+      // A settled day is frozen only once it holds a non-zero value; a settled 0 (e.g. health access granted late) can be filled in.
+      const hasValue = new Set(existing.filter((r) => r.steps > 0).map((r) => r.date));
       for (const date of dates) {
-        if (hasRow.has(date) && isDaySettled(date, input.timezone, now)) {
+        if (hasValue.has(date) && isDaySettled(date, input.timezone, now)) {
           frozen.push(date);
           continue;
         }

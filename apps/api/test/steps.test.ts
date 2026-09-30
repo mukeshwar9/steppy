@@ -77,6 +77,24 @@ describe("PUT /steps", () => {
     ctx.clock.set(NOON_AGAIN);
   });
 
+  it("lets a settled day stored as 0 be filled in, then freezes it", async () => {
+    const a = await http.register("Ann");
+    await http.upload(a, [{ date: "2026-10-10", steps: 0 }, { date: "2026-10-11", steps: 5 }]);
+    const fill = await http.upload(a, [{ date: "2026-10-10", steps: 4000 }, { date: "2026-10-11", steps: 9 }]);
+    expect(fill.accepted).toEqual(["2026-10-10"]);
+    expect(fill.frozen).toEqual(["2026-10-11"]);
+    const again = await http.upload(a, [{ date: "2026-10-10", steps: 1 }]);
+    expect(again.frozen).toEqual(["2026-10-10"]);
+    const list = await http.get("/me/steps?from=2026-10-10&to=2026-10-11", a.token);
+    expect(list.body.map((d: { date: string; steps: number }) => [d.date, d.steps])).toEqual([
+      ["2026-10-10", 4000],
+      ["2026-10-11", 5]
+    ]);
+    // a settled 0 can also be overwritten by another 0 without being reported as frozen
+    await http.upload(a, [{ date: "2026-10-09", steps: 0 }]);
+    expect((await http.upload(a, [{ date: "2026-10-09", steps: 0 }])).accepted).toEqual(["2026-10-09"]);
+  });
+
   it("updates user timezone and source from the request", async () => {
     const a = await http.register("Ann");
     await http.put("/steps", a.token, body([{ date: "2026-10-14", steps: 1 }], { source: "HEALTH_CONNECT", timezone: "America/New_York" }));
