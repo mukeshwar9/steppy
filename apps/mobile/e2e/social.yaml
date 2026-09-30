@@ -1,0 +1,74 @@
+# Social flow: a second user (Bob, created through the API) becomes the app user's friend, the app user
+# adds him to their group from the group screen, then Bob uploads steps with PUT /steps and the open
+# leaderboard updates by itself (Socket.IO) without pull-to-refresh.
+# Needs the API on http://localhost:3000 (override with -e API=...), see README.md.
+appId: com.steppy.app
+env:
+  API: http://localhost:3000
+---
+- runFlow: _signup.yaml
+- tapOn: "Skip for now"
+- extendedWaitUntil:
+    visible: "No groups yet"
+    timeout: 30000
+- tapOn: "Create a group"
+- tapOn: "Office walkers"
+- inputText: "Social Crew"
+- tapOn: "Create group"
+- extendedWaitUntil:
+    visible: "Social Crew"
+    timeout: 20000
+
+# Bob registers and adds the app user as a friend by friend code.
+- runScript:
+    file: scripts/social-setup.js
+    env:
+      EMAIL: ${output.email}
+      PASSWORD: ${output.password}
+      API: ${API}
+
+# App user adds Bob to the group from the group screen.
+- scrollUntilVisible:
+    element: "Add a friend to this group"
+    timeout: 20000
+- tapOn: "Add a friend to this group"
+- extendedWaitUntil:
+    visible: "Bob Buddy"
+    timeout: 15000
+- takeScreenshot: social-01-add-friend-to-group
+- tapOn: "Add"
+- extendedWaitUntil:
+    visible: "2 members"
+    timeout: 15000
+    optional: true
+- repeat:
+    times: 3
+    commands:
+      - swipe:
+          start: 50%, 25%
+          end: 50%, 85%
+- assertVisible: "2 members"
+- extendedWaitUntil:
+    visible: "Rank .*Bob Buddy.*"
+    timeout: 15000
+- takeScreenshot: social-02-bob-in-leaderboard
+
+# Bob uploads steps; the open leaderboard changes without any interaction.
+- runScript:
+    file: scripts/social-upload.js
+    env:
+      API: ${API}
+      STEPS: "12345"
+- extendedWaitUntil:
+    visible: "Rank 1, Bob Buddy, 12,345 steps.*"
+    timeout: 20000
+- takeScreenshot: social-03-live-update-1
+- runScript:
+    file: scripts/social-upload.js
+    env:
+      API: ${API}
+      STEPS: "15000"
+- extendedWaitUntil:
+    visible: "Rank 1, Bob Buddy, 15,000 steps.*"
+    timeout: 20000
+- takeScreenshot: social-04-live-update-2

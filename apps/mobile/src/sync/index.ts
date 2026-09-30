@@ -82,6 +82,9 @@ export async function writeSampleHealthData(): Promise<void> {
   return engine.writeSampleHealthData();
 }
 
+/** True when development tools (sample health data) are enabled; false in STEPPY_PRODUCTION builds. */
+export const developmentToolsEnabled: boolean = engine.STEPPY_DEV;
+
 /** Clears local sync state on sign-out. */
 export async function resetSyncState(): Promise<void> {
   return engine.resetSyncState();

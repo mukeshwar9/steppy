@@ -1,0 +1,74 @@
+# Account flow on the iOS simulator with the REAL HealthKit read path:
+# create account -> skip onboarding -> Me: "Write sample health data" (HealthKit permission sheet) ->
+# 90-day import -> create group and weekly challenge -> leaderboard shows me with HealthKit steps.
+# Needs a non-production build (STEPPY_PRODUCTION unset) and the API running (see README.md).
+appId: com.steppy.app
+---
+- runFlow: _signup.yaml
+- tapOn: "Skip for now"
+- extendedWaitUntil:
+    visible: "No groups yet"
+    timeout: 30000
+- tapOn: "Me, tab.*"
+- scrollUntilVisible:
+    element: "Write sample health data"
+    timeout: 20000
+    centerElement: true
+- tapOn: "Write sample health data"
+# HealthKit permission sheet: Turn On All, Allow.
+- extendedWaitUntil:
+    visible: "Turn On All"
+    timeout: 30000
+- takeScreenshot: account-01-healthkit-sheet
+- tapOn: "Turn On All"
+- tapOn:
+    text: "Allow"
+    index: 0
+# Writing ~1000 samples, reading them back and uploading 90 days takes a while.
+- scrollUntilVisible:
+    element: "Apple Health"
+    direction: UP
+    timeout: 20000
+- extendedWaitUntil:
+    visible: ".*Last synced (just now|[0-9]+ min ago).*"
+    timeout: 240000
+- assertVisible: "Apple Health"
+- assertNotVisible: ".*importing the last 90 days.*"
+- takeScreenshot: account-02-me-healthkit
+# Sync now works and keeps things healthy.
+- tapOn: "Sync now"
+- assertVisible: ".*Last synced (just now|[0-9]+ min ago).*"
+
+# Create a group
+- tapOn: "Groups, tab.*"
+- tapOn: "Create a group"
+- tapOn: "Office walkers"
+- inputText: "E2E Walkers"
+- tapOn: "Create group"
+- extendedWaitUntil:
+    visible: "E2E Walkers"
+    timeout: 20000
+- assertVisible: "1 member"
+# Leaderboard shows me with HealthKit-derived steps (week view so the number is non-zero at any hour)
+- tapOn: "Week"
+- extendedWaitUntil:
+    visible: "Rank 1, E2E Tester.*[1-9][0-9,]* steps.*"
+    timeout: 20000
+- takeScreenshot: account-03-group-leaderboard
+
+# Create a weekly challenge
+- scrollUntilVisible:
+    element: "\\+ New"
+    timeout: 20000
+- tapOn: "\\+ New"
+- extendedWaitUntil:
+    visible: "Start challenge"
+    timeout: 20000
+- tapOn: "Weekly (7 days)"
+- takeScreenshot: account-04-new-challenge
+- tapOn: "Start challenge"
+- extendedWaitUntil:
+    visible: "Standings"
+    timeout: 20000
+- assertVisible: "Rank 1, E2E Tester.*steps.*"
+- takeScreenshot: account-05-challenge

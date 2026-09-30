@@ -9,7 +9,7 @@ import { formatSteps, sourceLabel } from "../lib/format";
 import { errorText, useNow, usePullRefresh } from "../lib/hooks";
 import { deviceTimezone } from "../lib/tz";
 import { signOut } from "../state/auth";
-import { availableSources, connectSource, disconnectSource, syncNow, useSyncState, writeSampleHealthData } from "../sync";
+import { availableSources, connectSource, developmentToolsEnabled, disconnectSource, syncNow, useSyncState, writeSampleHealthData } from "../sync";
 import { spacing } from "../theme";
 import { Screen } from "../components/Screen";
 import { AppText, Button, Card, InlineError, SectionHeader, TextField } from "../components/ui";
@@ -164,12 +164,12 @@ export function MeScreen() {
         ) : null}
       </Card>
 
-      {__DEV__ ? (
+      {developmentToolsEnabled ? (
         <>
           <SectionHeader title="Developer" />
           <Card style={{ gap: spacing.md }}>
             <AppText variant="caption" muted>
-              The iOS Simulator has no step data. This writes 90 days of sample steps into Apple Health (or Health Connect on Android), then syncs them through the real read path. Connect your source first.
+              The iOS Simulator has no step data. This writes 90 days of sample steps into Apple Health (or Health Connect on Android), then imports them through the real read path. Tap it before connecting to import all 90 days; once connected, only recent days can still change.
             </AppText>
             <Button
               title="Write sample health data"
@@ -177,10 +177,7 @@ export function MeScreen() {
               loading={busy === "sample"}
               disabled={busy !== null && busy !== "sample"}
               onPress={() =>
-                void run("sample", async () => {
-                  await writeSampleHealthData();
-                  await syncNow("pull");
-                })
+                void run("sample", writeSampleHealthData)
               }
             />
           </Card>

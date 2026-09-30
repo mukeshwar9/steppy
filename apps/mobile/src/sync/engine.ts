@@ -166,15 +166,21 @@ export async function resetSyncState(): Promise<void> {
   await clearPersisted();
 }
 
-const STEPPY_DEV = Boolean((Constants.expoConfig?.extra as { steppyDev?: boolean } | undefined)?.steppyDev);
+/** True in every build that was not made with STEPPY_PRODUCTION=1 (app.config.ts sets `extra.steppyDev`). */
+export const STEPPY_DEV = Constants.expoConfig?.extra?.steppyDev === true;
 
 export async function writeSampleHealthData(): Promise<void> {
   const userId = await ensureHydrated();
-  const source = getPersisted().source;
-  if (!userId || !source) throw new Error("Connect a health source first.");
-  if (source === "DEMO") throw new Error("Sample data can only be written to HealthKit or Health Connect, not the DEMO source.");
+  if (!userId) throw new Error("Sign in first.");
   if (!STEPPY_DEV) throw new Error("Writing sample health data is only available in development builds.");
+  const connected = getPersisted().source;
+  if (connected === "DEMO") throw new Error("Sample data can only be written to HealthKit or Health Connect, not the DEMO source.");
+  const source = connected ?? platformSources().find(s => s !== "DEMO");
+  if (!source) throw new Error("This device has no health store to write sample data to.");
   await writeSamples(source, userId, new Date(), deviceTimezone());
-  await syncNow("pull");
+  // Not connected yet: connecting runs the 90-day backfill over the new samples. Already connected: days
+  // older than today's settle window were uploaded (as 0) at connect time and are frozen on the server,
+  // so only the recent days pick the samples up.
+  if (connected) await syncNow("pull");
+  else await connectSource(source);
 }
-

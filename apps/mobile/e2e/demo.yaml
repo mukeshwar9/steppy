@@ -1,0 +1,97 @@
+# Demo flow: "Try the demo" -> onboarding with demo steps -> seeded "Steppy Demo" group.
+# Needs the API running with DEMO_MODE=true (see README.md).
+appId: com.steppy.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- extendedWaitUntil:
+    visible: "Try the demo"
+    timeout: 30000
+- takeScreenshot: demo-01-auth
+- tapOn: "Try the demo"
+- extendedWaitUntil:
+    visible: "Where do your steps come from?"
+    timeout: 30000
+- tapOn: "Use demo steps"
+- extendedWaitUntil:
+    visible: "Steppy Demo.*"
+    timeout: 60000
+- takeScreenshot: demo-02-groups
+- tapOn: "Steppy Demo.*"
+
+# Leaderboard: members with steps and "updated ... ago"
+- extendedWaitUntil:
+    visible: "Rank 1,.*"
+    timeout: 30000
+- assertVisible: "Rank 1,.*steps.*"
+- assertVisible: ".*(updated|just now|ago).*"
+- takeScreenshot: demo-03-leaderboard-today
+- tapOn: "Week"
+- assertVisible: "Rank 1,.*"
+- takeScreenshot: demo-04-leaderboard-week
+- tapOn: "Month"
+- assertVisible: "Rank 1,.*"
+- tapOn: "3 Months"
+- assertVisible: "Rank 1,.*"
+- takeScreenshot: demo-05-leaderboard-3months
+- tapOn: "Today"
+- assertVisible: "Rank 1,.*"
+
+# Daily view
+- tapOn: "Daily"
+- assertVisible: ".*, not final yet|.* steps.*"
+- takeScreenshot: demo-06-daily
+- tapOn: "Leaderboard"
+
+# Challenges (list sits below the board)
+- scrollUntilVisible:
+    element: ".*, Finished"
+    timeout: 20000
+- takeScreenshot: demo-07-challenges
+
+# Live challenge: standings
+- scrollUntilVisible:
+    element: "Weekly challenge.*, Live"
+    timeout: 20000
+- tapOn: "Weekly challenge.*, Live"
+- extendedWaitUntil:
+    visible: "Standings"
+    timeout: 20000
+- assertVisible: "Rank 1,.*steps.*"
+- takeScreenshot: demo-08-challenge-live
+- tapOn:
+    id: BackButton
+
+# Finished challenge: winner banner
+- scrollUntilVisible:
+    element: ".*, Finished"
+    timeout: 20000
+- tapOn: ".*, Finished"
+- extendedWaitUntil:
+    visible: ".* wins!"
+    timeout: 20000
+- assertVisible: "Standings"
+- takeScreenshot: demo-09-challenge-finished
+- tapOn:
+    id: BackButton
+- tapOn:
+    id: BackButton
+
+# Friends tab: synthetic friends and my friend code
+- tapOn: "Friends, tab.*"
+- extendedWaitUntil:
+    visible: "Your friend code"
+    timeout: 20000
+- assertVisible: "Ava"
+- assertVisible: "Ben"
+- takeScreenshot: demo-10-friends
+
+# Me tab: sync status with a recent "last synced"
+- tapOn: "Me, tab.*"
+- extendedWaitUntil:
+    visible: ".*Last synced.*"
+    timeout: 20000
+- assertVisible: ".*Last synced (just now|[0-9]+ min ago).*"
+- assertVisible: "Demo"
+- takeScreenshot: demo-11-me

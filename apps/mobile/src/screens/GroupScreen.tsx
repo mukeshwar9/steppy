@@ -244,7 +244,11 @@ function MembersSection(props: { group: GroupDetail; myId: string | null; now: D
       </Card>
 
       <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-        <Button title={adding ? "Hide friends" : "Add a friend to this group"} variant="secondary" onPress={() => setAdding((v) => !v)} />
+        <Button title={adding ? "Hide friends" : "Add a friend to this group"} variant="secondary" onPress={() => {
+            // A friend may have added you since the list was loaded (no realtime event for that).
+            if (!adding) void friends.refetch();
+            setAdding((v) => !v);
+          }} />
         {adding ? (
           candidates.length === 0 ? (
             <Card>

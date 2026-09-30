@@ -74,8 +74,10 @@ export function useChallenge(challengeId: string) {
   });
 }
 
+/** Friends have no realtime event (someone adding you is silent), so poll every 60 s while focused. */
 export function useFriends() {
-  return useQuery({ queryKey: qk.friends, queryFn: api.listFriends });
+  const focused = useIsFocused();
+  return useQuery({ queryKey: qk.friends, queryFn: api.listFriends, refetchInterval: focused ? 60_000 : false });
 }
 
 export function useCreateGroup() {

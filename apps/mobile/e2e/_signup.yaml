@@ -1,0 +1,42 @@
+# Shared sub-flow: creates a fresh account (unique email) and lands on the onboarding screen.
+# Sets output.email / output.password for later steps. Needs a fresh-install state.
+appId: com.steppy.app
+---
+- evalScript: ${output.email = 'e2e-' + Date.now() + '@example.com'}
+- evalScript: ${output.password = 'e2e-password'}
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- extendedWaitUntil:
+    visible: "Create account"
+    timeout: 30000
+- tapOn: "Create account"
+- tapOn: "Alex"
+- inputText: "E2E Tester"
+- tapOn: "you@example.com"
+- inputText: ${output.email}
+- tapOn: "At least 6 characters"
+# iOS shows a "Use Strong Password?" sheet for new-password fields; close it (the X button) and type.
+- extendedWaitUntil:
+    visible: "Use Strong Password?"
+    timeout: 4000
+    optional: true
+- tapOn:
+    point: "91%,58%"
+    optional: true
+- tapOn: "At least 6 characters"
+- eraseText: 20
+- inputText: ${output.password}
+- takeScreenshot: signup-01-form
+- pressKey: Enter
+# iOS "Save Password?" prompt covers the app (Maestro cannot see it): wait, then tap Not Now by position.
+- extendedWaitUntil:
+    visible: "NEVER-VISIBLE-PAUSE"
+    timeout: 4000
+    optional: true
+- tapOn:
+    point: "32%,63%"
+- extendedWaitUntil:
+    visible: "Where do your steps come from?"
+    timeout: 30000
+- takeScreenshot: signup-02-onboarding
