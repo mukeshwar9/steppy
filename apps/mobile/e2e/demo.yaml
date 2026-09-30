@@ -15,15 +15,18 @@ appId: com.steppy.app
     timeout: 30000
 - tapOn: "Use demo steps"
 - extendedWaitUntil:
-    visible: "Steppy Demo.*"
+    visible: "Demo group.*"
     timeout: 60000
 - takeScreenshot: demo-02-groups
-- tapOn: "Steppy Demo.*"
+- tapOn: "Demo group.*"
 
 # Leaderboard: members with steps and "updated ... ago"
 - extendedWaitUntil:
     visible: "Rank 1,.*"
     timeout: 30000
+- assertVisible:
+    text: "Groups"
+    id: BackButton
 - assertVisible: "Rank 1,.*steps.*"
 - assertVisible: ".*(updated|just now|ago).*"
 - takeScreenshot: demo-03-leaderboard-today

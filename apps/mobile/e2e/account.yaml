@@ -3,6 +3,8 @@
 # 90-day import -> create group and weekly challenge -> leaderboard shows me with HealthKit steps.
 # Needs a non-production build (STEPPY_PRODUCTION unset) and the API running (see README.md).
 appId: com.steppy.app
+env:
+  API: http://localhost:3000
 ---
 - runFlow: _signup.yaml
 - tapOn: "Skip for now"
@@ -48,6 +50,9 @@ appId: com.steppy.app
 - extendedWaitUntil:
     visible: "E2E Walkers"
     timeout: 20000
+- assertVisible:
+    text: "Groups"
+    id: BackButton
 - assertVisible: "1 member"
 # Leaderboard shows me with HealthKit-derived steps (week view so the number is non-zero at any hour)
 - tapOn: "Week"
@@ -72,3 +77,62 @@ appId: com.steppy.app
     timeout: 20000
 - assertVisible: "Rank 1, E2E Tester.*steps.*"
 - takeScreenshot: account-05-challenge
+
+# Sign out and back in as the same account: Apple Health stays connected, onboarding is not repeated.
+- tapOn:
+    id: BackButton
+- tapOn:
+    id: BackButton
+    optional: true
+- tapOn: "Me, tab.*"
+- scrollUntilVisible:
+    element: "Sign out"
+    timeout: 20000
+- tapOn: "Sign out"
+- tapOn:
+    text: "Sign out"
+    index: 0
+- extendedWaitUntil:
+    visible: "Try the demo"
+    timeout: 20000
+- tapOn: "you@example.com"
+- inputText: ${output.email}
+- tapOn: "Your password"
+- inputText: ${output.password}
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: "NEVER-VISIBLE-PAUSE"
+    timeout: 3000
+    optional: true
+- tapOn:
+    point: "32%,63%"
+    optional: true
+- extendedWaitUntil:
+    visible: "E2E Walkers.*"
+    timeout: 30000
+- takeScreenshot: account-06-signed-back-in
+- tapOn: "Me, tab.*"
+- extendedWaitUntil:
+    visible: "Apple Health"
+    timeout: 20000
+- assertVisible: ".*Last synced.*"
+- takeScreenshot: account-07-me-still-connected
+
+# Delete the account.
+- scrollUntilVisible:
+    element: "Delete account"
+    timeout: 20000
+- tapOn: "Delete account"
+- tapOn:
+    text: "Delete account"
+    index: 0
+- extendedWaitUntil:
+    visible: "Try the demo"
+    timeout: 30000
+- takeScreenshot: account-08-after-delete
+- runScript:
+    file: scripts/assert-deleted.js
+    env:
+      EMAIL: ${output.email}
+      PASSWORD: ${output.password}
+      API: ${API}

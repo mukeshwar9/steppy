@@ -5,8 +5,8 @@ Maestro drives the real Release build on a booted iOS Simulator. The flows need 
 
 | Flow | What it covers |
 |---|---|
-| `demo.yaml` | Try the demo, onboarding with demo steps, demo group leaderboard (Today/Week/Month/3 Months), Daily view, live and finished challenge, Friends tab, Me tab sync status |
-| `account.yaml` | Create account, write sample data into HealthKit (permission sheet), 90-day import, create group and weekly challenge, leaderboard with HealthKit steps |
+| `demo.yaml` | Try the demo, onboarding with demo steps, private "Demo group" leaderboard (back button reads "Groups") (Today/Week/Month/3 Months), Daily view, live and finished challenge, Friends tab, Me tab sync status |
+| `account.yaml` | Create account, write sample data into HealthKit (permission sheet), 90-day import, create group and weekly challenge, leaderboard with HealthKit steps, sign out and back in (Apple Health stays connected), delete account (old credentials get 401) |
 | `social.yaml` | A second user (created through the API) becomes a friend, is added to the group in the app, then uploads steps with `PUT /steps`; the open leaderboard updates live over Socket.IO |
 | `_signup.yaml` | Shared sub-flow (unique email account), not run on its own |
 
